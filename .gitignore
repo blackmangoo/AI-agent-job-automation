@@ -1,0 +1,49 @@
+# ========================
+# AI Job Application Agent
+# ========================
+
+# Secrets & credentials
+.env
+credentials/
+*.json
+!package.json
+
+# User CV / resume (private data)
+assets/
+
+# Browser session data
+browser_data/
+
+# Application logs
+logs/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Playwright
+playwright-report/
+test-results/

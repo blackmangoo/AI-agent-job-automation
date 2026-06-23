@@ -1,0 +1,26 @@
+# ============================================
+# AI Job Application Agent — Dependencies
+# ============================================
+
+# Browser automation
+playwright==1.52.0
+
+# HTML parsing
+beautifulsoup4==4.13.4
+
+# LLM API
+groq==0.25.0
+
+# Environment variables
+python-dotenv==1.1.0
+
+# CV parsing
+PyPDF2==3.0.1
+python-docx==1.1.2
+
+# Google Sheets integration
+gspread==6.2.1
+google-auth==2.40.3
+
+# Git automation (fallback if MCP unavailable)
+requests==2.32.3
