@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "Indeed Auto-Applier Agent",
+  "version": "1.0",
+  "description": "Automatically applies to fresh jobs on Indeed.com matching your CV, using a local AI backend.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://*.indeed.com/*",
+    "http://localhost:8000/*"
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://*.indeed.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_end"
+    }
+  ]
+}
