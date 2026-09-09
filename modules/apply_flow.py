@@ -195,9 +195,10 @@ def detect_apply_form(page: Page) -> str:
     return "none"
 
 
-def get_apply_page(page: Page) -> Page:
+def get_apply_page(page: Page):
     """Get the correct page/frame to interact with for the application form.
 
+    If the form is in a newly opened tab, returns that tab.
     If the form is in an iframe, returns the iframe's content frame.
     Otherwise returns the original page.
 
@@ -207,6 +208,16 @@ def get_apply_page(page: Page) -> Page:
     Returns:
         The Page or Frame object to use for form filling.
     """
+    # Check if application opened in a new tab
+    try:
+        if page.context and len(page.context.pages) > 1:
+            newest_page = page.context.pages[-1]
+            if newest_page != page:
+                logger.info(f"Detected new application tab: {newest_page.url}")
+                return newest_page
+    except Exception:
+        pass
+
     # Check for iframes
     try:
         for frame in page.frames:

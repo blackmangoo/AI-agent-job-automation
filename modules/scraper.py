@@ -80,7 +80,7 @@ def scrape_job_page(page: Page, url: str) -> dict:
     # Wait for main content to appear (Indeed-specific + generic)
     try:
         page.wait_for_selector(
-            "div.jobsearch-JobComponent, div.job-details, article, main, #job-details",
+            "div.jobsearch-JobComponent, div.job-details, #jobDescriptionText, article, main, #job-details",
             timeout=10000,
         )
     except PlaywrightTimeout:

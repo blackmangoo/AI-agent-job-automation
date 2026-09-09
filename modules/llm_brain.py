@@ -20,8 +20,18 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Model configuration
-MODEL = "llama-3.3-70b-versatile"
+# Model configuration - supports environment override and automatic fallbacks
+DEFAULT_MODEL = os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b")
+FALLBACK_MODELS = [
+    DEFAULT_MODEL,
+    "qwen/qwen3.8-27b",
+    "openai/gpt-oss-120b",
+    "groq/compound",
+    "llama-3.3-70b-versatile",
+]
+# Remove duplicates while preserving order
+MODEL_CANDIDATES = list(dict.fromkeys(FALLBACK_MODELS))
+_ACTIVE_MODEL = MODEL_CANDIDATES[0]
 TEMPERATURE = 0.3
 MAX_TOKENS = 2048
 
@@ -220,7 +230,7 @@ def _call_groq(
     retry_message: Optional[str] = None,
     previous_response: Optional[str] = None,
 ) -> str:
-    """Make a call to the Groq API.
+    """Make a call to the Groq API with automatic model fallback.
 
     Args:
         client: Initialized Groq client.
@@ -233,8 +243,10 @@ def _call_groq(
         The raw text response from the LLM.
 
     Raises:
-        RuntimeError: If the API call fails.
+        RuntimeError: If the API call fails on all available models.
     """
+    global _ACTIVE_MODEL
+
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
@@ -244,23 +256,44 @@ def _call_groq(
         messages.append({"role": "assistant", "content": previous_response})
         messages.append({"role": "user", "content": retry_message})
 
-    try:
-        completion = client.chat.completions.create(
-            model=MODEL,
-            messages=messages,
-            temperature=TEMPERATURE,
-            max_tokens=MAX_TOKENS,
-            response_format={"type": "json_object"},
-        )
+    # Try active model first, then fallback to other candidate models
+    models_to_try = [_ACTIVE_MODEL] + [m for m in MODEL_CANDIDATES if m != _ACTIVE_MODEL]
+    last_error = None
 
-        response_text = completion.choices[0].message.content
-        logger.debug(f"Groq response ({len(response_text)} chars): {response_text[:200]}...")
+    for model_name in models_to_try:
+        try:
+            logger.debug(f"Calling Groq using model: {model_name}")
+            completion = client.chat.completions.create(
+                model=model_name,
+                messages=messages,
+                temperature=TEMPERATURE,
+                max_tokens=MAX_TOKENS,
+                response_format={"type": "json_object"},
+            )
 
-        return response_text
+            response_text = completion.choices[0].message.content
+            if _ACTIVE_MODEL != model_name:
+                logger.info(f"Switched active Groq model to: {model_name}")
+                _ACTIVE_MODEL = model_name
 
-    except Exception as e:
-        logger.error(f"Groq API call failed: {e}")
-        raise RuntimeError(f"Groq API call failed: {e}")
+            logger.debug(f"Groq response ({len(response_text)} chars): {response_text[:200]}...")
+            return response_text
+
+        except Exception as e:
+            last_error = e
+            err_str = str(e).lower()
+            if "model" in err_str and ("not exist" in err_str or "not have access" in err_str or "404" in err_str):
+                logger.warning(f"Model '{model_name}' not available on this Groq account, trying next fallback...")
+                continue
+            elif "rate" in err_str and "limit" in err_str:
+                logger.warning(f"Rate limit on model '{model_name}', trying next fallback...")
+                continue
+            else:
+                logger.warning(f"Groq error with model '{model_name}': {e}. Trying fallback...")
+                continue
+
+    logger.error(f"All Groq models failed. Last error: {last_error}")
+    raise RuntimeError(f"Groq API call failed across all candidate models: {last_error}")
 
 
 def _parse_response(response_text: str) -> Optional[dict]:

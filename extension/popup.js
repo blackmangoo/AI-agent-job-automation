@@ -162,3 +162,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     statsApplied.textContent = request.stats.applied;
   }
 });
+
+// React to storage changes dynamically (e.g. when content script stops bot)
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName === "local") {
+    if (changes.botRunning !== undefined) {
+      toggleBotUI(changes.botRunning.newValue);
+    }
+    if (changes.stats !== undefined) {
+      statsScanned.textContent = changes.stats.newValue.scanned || 0;
+      statsApplied.textContent = changes.stats.newValue.applied || 0;
+    }
+  }
+});

@@ -27,7 +27,7 @@ from utils.logger import get_logger
 
 logger = get_logger("server")
 
-DEFAULT_CV_PATH = "./assets/updated_cv.pdf"
+DEFAULT_CV_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "updated_cv.pdf")
 cv_text = ""
 
 # Load and parse CV on startup
@@ -105,7 +105,7 @@ class APIRequestHandler(http.server.BaseHTTPRequestHandler):
             try:
                 urls = get_applied_urls()
                 self._set_headers(200)
-                self.wfile.write(json.dumps({"urls": urls}).encode("utf-8"))
+                self.wfile.write(json.dumps({"urls": list(urls)}).encode("utf-8"))
             except Exception as e:
                 self._set_headers(500)
                 self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
@@ -191,8 +191,9 @@ class APIRequestHandler(http.server.BaseHTTPRequestHandler):
 
 def run_server(port=8000):
     server_address = ("", port)
-    httpd = http.server.HTTPServer(server_address, APIRequestHandler)
-    logger.info(f"Starting Local API Server on http://localhost:{port}...")
+    http.server.ThreadingHTTPServer.allow_reuse_address = True
+    httpd = http.server.ThreadingHTTPServer(server_address, APIRequestHandler)
+    logger.info(f"Starting Multi-Threaded Local API Server on http://localhost:{port}...")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

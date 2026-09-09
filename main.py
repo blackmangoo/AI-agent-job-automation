@@ -273,7 +273,7 @@ def _process_single_job(
 # SINGLE URL MODE
 # =====================================================================
 
-def run_single(job_url: str, dry_run: bool = False) -> dict:
+def run_single(job_url: str, dry_run: bool = False, auto_submit: bool = False) -> dict:
     """Run the pipeline for a single job URL."""
     _print_banner()
     load_dotenv()
@@ -295,7 +295,7 @@ def run_single(job_url: str, dry_run: bool = False) -> dict:
         _wait_for_real_page(page, job_url)
         long_delay()
 
-        result = _process_single_job(page, job_url, cv_text, dry_run=dry_run)
+        result = _process_single_job(page, job_url, cv_text, dry_run=dry_run, auto_submit=auto_submit)
 
         logger.info(f"{'=' * 50}")
         logger.info(f"Run complete -- Status: {result['status'].upper()}")
@@ -628,7 +628,7 @@ Modes:
     # Determine mode
     if args.url:
         # Single URL mode
-        result = run_single(args.url, dry_run=args.dry_run)
+        result = run_single(args.url, dry_run=args.dry_run, auto_submit=args.auto_submit)
         status = result.get("status", "error")
         sys.exit(0 if status in ("applied", "form_filled", "dry_run", "skipped", "analyzed") else 1)
 

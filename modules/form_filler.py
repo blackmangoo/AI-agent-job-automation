@@ -16,45 +16,53 @@ logger = get_logger(__name__)
 
 # Standard form field mappings — maps common label patterns to candidate data
 STANDARD_FIELDS = {
-    # Name fields
+    # Specific name fields
     "full name": lambda c: c.full_name,
     "first name": lambda c: c.full_name.split()[0],
     "last name": lambda c: c.full_name.split()[-1],
-    "name": lambda c: c.full_name,
-
-    # Contact fields
-    "email": lambda c: c.email,
-    "e-mail": lambda c: c.email,
-    "email address": lambda c: c.email,
-    "phone": lambda c: c.phone,
-    "phone number": lambda c: c.phone,
-    "mobile": lambda c: c.phone,
-    "contact number": lambda c: c.phone,
+    "applicant name": lambda c: c.full_name,
+    "candidate name": lambda c: c.full_name,
+    "your name": lambda c: c.full_name,
 
     # Professional links
-    "linkedin": lambda c: c.linkedin,
     "linkedin url": lambda c: c.linkedin,
     "linkedin profile": lambda c: c.linkedin,
-    "github": lambda c: c.github,
+    "linkedin": lambda c: c.linkedin,
     "github url": lambda c: c.github,
     "github profile": lambda c: c.github,
-    "portfolio": lambda c: c.portfolio,
+    "github": lambda c: c.github,
     "portfolio url": lambda c: c.portfolio,
-    "website": lambda c: c.portfolio,
     "personal website": lambda c: c.portfolio,
+    "portfolio": lambda c: c.portfolio,
+    "website": lambda c: c.portfolio,
 
-    # Location
-    "city": lambda c: "Islamabad",
-    "location": lambda c: c.location,
-    "address": lambda c: "Islamabad, Pakistan",
-    "country": lambda c: "Pakistan",
+    # Contact fields
+    "email address": lambda c: c.email,
+    "e-mail": lambda c: c.email,
+    "email": lambda c: c.email,
+    "phone number": lambda c: c.phone,
+    "contact number": lambda c: c.phone,
+    "mobile number": lambda c: c.phone,
+    "mobile": lambda c: c.phone,
+    "phone": lambda c: c.phone,
 
     # Education
+    "school name": lambda c: c.university,
+    "university name": lambda c: c.university,
     "university": lambda c: c.university,
     "school": lambda c: c.university,
     "degree": lambda c: c.degree,
     "graduation year": lambda c: "2026",
     "gpa": lambda c: "N/A",
+
+    # Location
+    "address": lambda c: "Islamabad, Pakistan",
+    "city": lambda c: "Islamabad",
+    "country": lambda c: "Pakistan",
+    "location": lambda c: c.location,
+
+    # Fallback generic name (matched last with exclusions)
+    "name": lambda c: c.full_name,
 }
 
 
@@ -139,12 +147,23 @@ def _fill_standard_fields(page: Page, candidate: CandidateProfile) -> None:
                 continue
 
             # Check if we have a standard mapping for this field
+            ident_lower = field_identity.lower()
+            matched = False
             for pattern, value_fn in STANDARD_FIELDS.items():
-                if pattern in field_identity.lower():
+                if pattern == "name":
+                    # Avoid false positives for company/school/file/user name
+                    if any(exclude in ident_lower for exclude in ["company", "employer", "school", "university", "org", "user", "file"]):
+                        continue
+                    # Match only if word 'name' is in field
+                    if "name" not in ident_lower.split():
+                        continue
+
+                if pattern in ident_lower:
                     value = value_fn(candidate)
                     _fill_field(page, element, value)
                     logger.debug(f"Filled '{field_identity}' with standard value")
                     medium_delay()
+                    matched = True
                     break
 
         except Exception as e:
@@ -392,15 +411,34 @@ def _fill_field(page: Page, element, value: str) -> None:
                             break
             logger.debug(f"Selected option: {value}")
 
-        elif input_type in ("checkbox", "radio"):
-            # For checkboxes/radios, click if the answer is affirmative
+        elif input_type == "checkbox":
             affirmative = value.lower() in ("yes", "true", "1", "agree", "accept")
             if affirmative and not element.is_checked():
                 element.click()
-                logger.debug("Checked checkbox/radio")
+                logger.debug("Checked checkbox")
             elif not affirmative and element.is_checked():
                 element.click()
-                logger.debug("Unchecked checkbox/radio")
+                logger.debug("Unchecked checkbox")
+
+        elif input_type == "radio":
+            val_lower = value.strip().lower()
+            field_label = _identify_field(page, element).lower()
+            elem_val = (element.get_attribute("value") or "").lower()
+
+            is_yes_val = val_lower in ("yes", "true", "1")
+            is_no_val = val_lower in ("no", "false", "0")
+
+            matches = False
+            if is_yes_val and (elem_val in ("yes", "true", "1") or "yes" in field_label.split()):
+                matches = True
+            elif is_no_val and (elem_val in ("no", "false", "0") or "no" in field_label.split()):
+                matches = True
+            elif val_lower in elem_val or elem_val in val_lower or val_lower in field_label:
+                matches = True
+
+            if matches and not element.is_checked():
+                element.click()
+                logger.debug(f"Checked radio button for value '{value}'")
 
         elif tag == "textarea" or input_type in ("text", "email", "tel", "url", "number", "search"):
             # Clear existing content

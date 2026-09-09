@@ -81,7 +81,12 @@ def launch_browser(
     global _playwright_instance
     import os
 
-    CHROME_PATH = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+    chrome_candidates = [
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
+    ]
+    executable_path = next((p for p in chrome_candidates if os.path.exists(p)), None)
 
     if user_data_dir is None or user_data_dir == "C:\\Users\\ammar\\AppData\\Local\\Google\\Chrome\\User Data":
         user_data_dir = "./browser_data"
@@ -89,22 +94,28 @@ def launch_browser(
     # Ensure the browser data directory exists
     Path(user_data_dir).mkdir(parents=True, exist_ok=True)
 
-    logger.info(f"Launching Chrome (headless={headless}, profile={user_data_dir})")
+    logger.info(f"Launching Chrome (headless={headless}, profile={user_data_dir}, exe={executable_path})")
 
     try:
         _playwright_instance = sync_playwright().start()
 
+        launch_kwargs = {
+            "user_data_dir": user_data_dir,
+            "headless": headless,
+            "viewport": {"width": 1280, "height": 720},
+            "locale": "en-US",
+            "timezone_id": "Asia/Karachi",
+            "args": [],
+            "ignore_default_args": ["--enable-automation", "--no-sandbox"],
+        }
+        if executable_path:
+            launch_kwargs["executable_path"] = executable_path
+
         # Launch persistent context using clean profile
-        context = _playwright_instance.chromium.launch_persistent_context(
-            user_data_dir=user_data_dir,
-            headless=headless,
-            executable_path=CHROME_PATH,
-            viewport={"width": 1280, "height": 720},
-            locale="en-US",
-            timezone_id="Asia/Karachi",
-            args=[],
-            ignore_default_args=["--enable-automation", "--no-sandbox"],
-        )
+        context = _playwright_instance.chromium.launch_persistent_context(**launch_kwargs)
+
+        # Inject stealth anti-detection script into all pages and frames
+        context.add_init_script(_STEALTH_JS)
 
         # Use existing page if available, otherwise create one
         if context.pages:

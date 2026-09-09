@@ -122,19 +122,51 @@ mkdir assets
 
 ## 📖 Usage
 
-### Apply to a job listing
+### Option A: Chrome Extension + Local API Server (Recommended)
+
+1. **Start the local API backend:**
+   ```bash
+   python server.py
+   ```
+2. **Load the Chrome Extension:**
+   - Open Chrome and navigate to `chrome://extensions/`
+   - Enable **Developer mode** (top right)
+   - Click **Load unpacked** and select the `extension/` folder in this repository
+3. **Run on Indeed:**
+   - Open [Indeed.com](https://pk.indeed.com) or a search page like `https://pk.indeed.com/jobs?q=AI+Engineer`
+   - Click the **Indeed Auto-Applier Agent** extension icon
+   - Verify that the status shows **Backend Online**
+   - Choose your preferences (**Dry Run**, **Skip Ineligible**) and click **Start Bot**
+
+---
+
+### Option B: CLI Orchestrator
+
+#### Apply to a single job listing
 
 ```bash
 python main.py --url "https://pk.indeed.com/viewjob?jk=abc123"
 ```
 
-### Dry run (analyze only — no form filling)
+#### Batch feed mode (auto-crawls and applies to eligible jobs)
+
+```bash
+python main.py --mode feed --max-apply 20
+```
+
+#### Batch search mode
+
+```bash
+python main.py --mode feed --search "AI Engineer" --max-apply 10
+```
+
+#### Dry run (analyze only — no form filling)
 
 ```bash
 python main.py --url "https://pk.indeed.com/viewjob?jk=abc123" --dry-run
 ```
 
-### Custom CV path
+#### Custom CV path
 
 ```bash
 python main.py --url "https://pk.indeed.com/viewjob?jk=abc123" --cv "./my_resume.pdf"
@@ -183,21 +215,29 @@ AI-agent-job-automation/
 ├── .env.example              # Environment template
 ├── .gitignore                # Protects secrets & data
 ├── requirements.txt          # Pinned dependencies
-├── README.md                 # This file
-├── main.py                   # 🎯 Orchestrator — run this
-├── git_manager.py            # GitHub auto-commit/push
+├── README.md                 # Documentation
+├── main.py                   # 🎯 CLI Orchestrator
+├── server.py                 # 🚀 Multi-threaded local API backend
+├── git_manager.py            # GitHub automation helper
 ├── assets/                   # Your CV (gitignored)
 ├── credentials/              # Google Sheets key (gitignored)
+├── extension/                # 🧩 Chrome Extension (Manifest V3)
+│   ├── manifest.json         # Extension configuration
+│   ├── popup.html            # Control panel UI
+│   ├── popup.js              # UI controller & backend connection
+│   └── content.js            # DOM automation & form filler
 ├── config/
 │   └── candidate_profile.py  # Your professional profile
 ├── modules/
 │   ├── scraper.py            # Job page scraping engine
-│   ├── llm_brain.py          # Groq LLM decision brain
-│   ├── form_filler.py        # Smart form filling
+│   ├── llm_brain.py          # Groq LLM decision brain (multi-model fallback)
+│   ├── form_filler.py        # Smart form filling engine
+│   ├── apply_flow.py         # Multi-step Indeed flow handler
+│   ├── feed_crawler.py       # Indeed feed crawler
 │   ├── human_loop.py         # Human-in-the-loop handler
-│   └── sheets_logger.py      # Google Sheets tracker
+│   └── sheets_logger.py      # Google Sheets tracker (URL/ID auto-resolve)
 ├── utils/
-│   ├── browser.py            # Playwright browser manager
+│   ├── browser.py            # Playwright browser manager with stealth
 │   ├── delays.py             # Human-like delay utilities
 │   ├── logger.py             # Colored logging setup
 │   └── cv_parser.py          # PDF/DOCX CV parser

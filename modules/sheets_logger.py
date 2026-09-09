@@ -14,6 +14,7 @@ Setup:
 """
 
 import os
+import re
 from datetime import datetime
 from typing import Optional
 
@@ -81,12 +82,51 @@ def _get_sheets_client():
         raise RuntimeError(f"Failed to authenticate with Google Sheets: {e}")
 
 
+def _extract_spreadsheet_id(id_or_url: str) -> str:
+    """Extract clean spreadsheet ID from a raw ID or full Google Sheets URL.
+
+    Args:
+        id_or_url: Google Sheets key ID or full URL.
+
+    Returns:
+        Clean spreadsheet key ID.
+    """
+    if not id_or_url:
+        return ""
+    id_or_url = id_or_url.strip()
+    match = re.search(r"/spreadsheets/d/([a-zA-Z0-9-_]+)", id_or_url)
+    if match:
+        return match.group(1)
+    return id_or_url
+
+
+def _open_spreadsheet(client, id_or_url: str):
+    """Open a Google Spreadsheet by key ID or full URL.
+
+    Args:
+        client: Authorized gspread client.
+        id_or_url: Key ID or full URL of the spreadsheet.
+
+    Returns:
+        Opened gspread.Spreadsheet instance.
+    """
+    id_or_url = id_or_url.strip()
+    if id_or_url.startswith("http://") or id_or_url.startswith("https://"):
+        try:
+            return client.open_by_url(id_or_url)
+        except Exception:
+            clean_id = _extract_spreadsheet_id(id_or_url)
+            return client.open_by_key(clean_id)
+    else:
+        return client.open_by_key(id_or_url)
+
+
 def _get_or_create_spreadsheet(client, spreadsheet_id: Optional[str] = None):
     """Get an existing spreadsheet or create a new one.
 
     Args:
         client: Authorized gspread client.
-        spreadsheet_id: Optional ID of an existing spreadsheet.
+        spreadsheet_id: Optional ID or URL of an existing spreadsheet.
 
     Returns:
         A gspread.Spreadsheet instance.
@@ -95,7 +135,7 @@ def _get_or_create_spreadsheet(client, spreadsheet_id: Optional[str] = None):
 
     if spreadsheet_id:
         try:
-            spreadsheet = client.open_by_key(spreadsheet_id)
+            spreadsheet = _open_spreadsheet(client, spreadsheet_id)
             logger.info(f"Opened existing spreadsheet: {spreadsheet.title}")
             return spreadsheet
         except gspread.SpreadsheetNotFound:
@@ -219,7 +259,7 @@ def get_applied_urls() -> set:
         if not spreadsheet_id:
             return set()
 
-        spreadsheet = client.open_by_key(spreadsheet_id)
+        spreadsheet = _open_spreadsheet(client, spreadsheet_id)
         worksheet = spreadsheet.sheet1
 
         # Get all values from the URL column (column 5, index 4)
@@ -252,7 +292,7 @@ def get_application_history() -> list:
             logger.warning("No GOOGLE_SHEETS_ID configured")
             return []
 
-        spreadsheet = client.open_by_key(spreadsheet_id)
+        spreadsheet = _open_spreadsheet(client, spreadsheet_id)
         worksheet = spreadsheet.sheet1
         records = worksheet.get_all_records()
 

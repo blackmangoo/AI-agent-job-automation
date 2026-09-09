@@ -9,7 +9,10 @@ const BACKEND_URL = "http://127.0.0.1:8000";
 
 function isIndeedApplyPage() {
   const url = window.location.href;
-  return url.includes("/ia/") || url.includes("apply.indeed.com") || url.includes("smartapply.indeed.com");
+  if (url.includes("/ia/") || url.includes("apply.indeed.com") || url.includes("smartapply.indeed.com") || url.includes("/applystart")) {
+    return true;
+  }
+  return !!document.querySelector("div[class*='ia-'], div[data-testid='apply-form'], form[action*='apply'], #indeedapply-modal, div.ia-BasePage, div[role='dialog']");
 }
 
 // Log a message to the extension popup and save it to storage
@@ -17,10 +20,14 @@ function log(msg) {
   const timestamp = new Date().toLocaleTimeString();
   const logLine = `[${timestamp}] ${msg}`;
   console.log(`[Indeed Agent] ${logLine}`);
-  
-  // Send live message to popup
-  chrome.runtime.sendMessage({ action: "updateLog", message: logLine });
-  
+
+  // Send live message to popup safely without unhandled rejections if popup is closed
+  try {
+    chrome.runtime.sendMessage({ action: "updateLog", message: logLine }, () => {
+      if (chrome.runtime.lastError) { /* popup closed - safe to ignore */ }
+    });
+  } catch (e) {}
+
   // Persist log line in storage so it is not lost on page reload/navigation
   chrome.storage.local.get("logs", (res) => {
     const logs = res.logs || [];
@@ -31,7 +38,11 @@ function log(msg) {
 
 // Update stats in the extension popup
 function updateStats() {
-  chrome.runtime.sendMessage({ action: "updateStats", stats: stats });
+  try {
+    chrome.runtime.sendMessage({ action: "updateStats", stats: stats }, () => {
+      if (chrome.runtime.lastError) { /* popup closed - safe to ignore */ }
+    });
+  } catch (e) {}
   chrome.storage.local.set({ stats: stats });
 }
 
@@ -310,13 +321,20 @@ async function autoFillJobApplication() {
       stats.applied++;
       updateStats();
 
-      // Stop bot so it doesn't navigate away before review
+      // Stop bot so it doesn't navigate away before user review
       isRunning = false;
       chrome.storage.local.set({ botRunning: false });
-      toggleBotUI(false);
+      log("Bot paused for user review. Submit when ready.");
     } else if (continueBtn) {
       log("Clicking 'Continue' to move to next step...");
       await simulateClick(continueBtn);
+
+      // Wait for SPA dynamic page update and resume filling if still running
+      await sleep(2500);
+      if (isRunning) {
+        log("Proceeding with next form step...");
+        await autoFillJobApplication();
+      }
     }
 
   } catch (err) {
@@ -508,57 +526,62 @@ function getLabelText(input) {
 
 // Set form value for various input types
 async function setFieldValue(field, value) {
+  if (!field || value === undefined || value === null) return;
+  const strValue = String(value);
+
   if (field.tagName === "SELECT") {
     // Select option by matching text
     const options = Array.from(field.options);
-    const target = options.find(o => o.text.toLowerCase().includes(value.toLowerCase()) || o.value.toLowerCase().includes(value.toLowerCase()));
+    const target = options.find(o => o.text.toLowerCase().includes(strValue.toLowerCase()) || o.value.toLowerCase().includes(strValue.toLowerCase()));
     if (target) {
       field.value = target.value;
       field.dispatchEvent(new Event("change", { bubbles: true }));
     }
   } else if (field.type === "checkbox" || field.type === "radio") {
-    const isYes = ["yes", "true", "1", "apply"].includes(value.toLowerCase());
-    const isNo = ["no", "false", "0"].includes(value.toLowerCase());
+    const isYes = ["yes", "true", "1", "apply"].includes(strValue.toLowerCase());
+    const isNo = ["no", "false", "0"].includes(strValue.toLowerCase());
     const labelText = getLabelText(field).toLowerCase();
-    
+
     if (field.type === "checkbox") {
       field.checked = isYes;
       field.dispatchEvent(new Event("change", { bubbles: true }));
     } else {
       // For radio groups, match value text to label
-      if (labelText.includes(value.toLowerCase()) || (isYes && labelText === "yes") || (isNo && labelText === "no")) {
+      if (labelText.includes(strValue.toLowerCase()) || (isYes && labelText === "yes") || (isNo && labelText === "no")) {
         field.checked = true;
         field.dispatchEvent(new Event("change", { bubbles: true }));
       }
     }
   } else {
     // Simulate real keyboard typing
-    await simulateTyping(field, value);
+    await simulateTyping(field, strValue);
   }
 }
 
 // Simulate realistic keypress-by-keypress typing and autocomplete selection
 async function simulateTyping(field, value) {
+  if (!field || value === undefined || value === null) return;
+  const strValue = String(value);
   field.focus();
   field.value = "";
-  
+
   // Type character by character
-  for (let i = 0; i < value.length; i++) {
-    const char = value[i];
+  for (let i = 0; i < strValue.length; i++) {
+    const char = strValue[i];
     const keydownEvent = new KeyboardEvent('keydown', { key: char, bubbles: true });
     const keypressEvent = new KeyboardEvent('keypress', { key: char, bubbles: true });
-    
+
     field.dispatchEvent(keydownEvent);
     field.dispatchEvent(keypressEvent);
-    
+
     field.value += char;
-    
+
     const inputEvent = new Event('input', { bubbles: true });
     field.dispatchEvent(inputEvent);
-    
+
     const keyupEvent = new KeyboardEvent('keyup', { key: char, bubbles: true });
     field.dispatchEvent(keyupEvent);
-    
+
     await sleep(40); // 40ms typing delay per character
   }
   
