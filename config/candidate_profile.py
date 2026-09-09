@@ -132,13 +132,14 @@ CANDIDATE = CandidateProfile(
     portfolio="https://ammar.works",
     degree="Bachelor of Science in Artificial Intelligence",
     university="FAST — National University of Computer and Emerging Sciences",
-    graduation="Expected June 2026",
-    status="Fresh Graduate",
+    graduation="Expected Dec 2026",
+    status="BS AI Candidate",
     summary=(
-        "AI/ML engineer and BS Artificial Intelligence graduate (FAST-NUCES, 2026) "
-        "specializing in computer vision, RAG pipelines, and LLM fine-tuning. "
-        "Builds deployable AI systems end-to-end — from model training to production "
-        "APIs and mobile interfaces. Open to full-time AI/ML engineering roles and internships."
+        "AI/ML Engineer and BS Artificial Intelligence candidate at FAST-NUCES with "
+        "hands-on experience building deployable machine learning systems across "
+        "computer vision, NLP, LLM applications, RAG, and model-serving APIs. Strong in "
+        "Python, PyTorch, Hugging Face, FastAPI, SQL, and Docker, with experience taking "
+        "models from experimentation to usable applications."
     ),
     target_roles=[
         "AI/ML Engineer / Research Intern",
@@ -202,15 +203,33 @@ CANDIDATE = CandidateProfile(
     projects=[
         Project(
             name="OmniDrive AI",
-            description="Automotive Diagnostic Platform (Final Year Project)",
-            tech_stack="Flutter, FastAPI, YOLOv11-Large, Supabase, Firebase FCM, Kalman Filter, OBD-II",
+            description="Intelligent Automotive Diagnostic Platform (Final Year Project, Sep 2025 – Aug 2026)",
+            tech_stack="Flutter, FastAPI, YOLO11-Large, Supabase, Firebase, Kalman Filter, OBD-II",
             highlights=[
-                "Trained YOLO11-Large on 26,820 images across 50 car-part classes (100 epochs, Kaggle GPU) "
-                "— 99.1% top-1 accuracy, ~110ms CPU inference served via FastAPI /predict.",
-                "Built GPS/IMU Kalman-filter sensor fusion for real-time 0-60, 0-100 km/h, "
-                "quarter-mile, and braking tests; OBD-II ELM327 WiFi for ground-truth speed.",
-                "Architected a 4-role marketplace (customer, vendor, rider, admin) with atomic stock RPCs, "
-                "Firebase FCM push notifications, and Admin TOTP MFA — 49 Dart files, 13 PostgreSQL tables.",
+                "Trained YOLO11-Large on 26,820 images across 50 car-part classes, achieving 99.1% validation "
+                "top-1 accuracy; served inference through FastAPI at 110ms CPU latency.",
+                "Engineered GPS/IMU Kalman-filter sensor fusion for 0–60, 0–100 km/h, quarter-mile, and braking tests; "
+                "built a 4-role marketplace with PostgreSQL RPCs, FCM notifications, and TOTP MFA.",
+            ],
+        ),
+        Project(
+            name="AI Job Application Agent",
+            description="Autonomous Job Search & Application Agent (2026)",
+            tech_stack="Python, Groq LLaMA 3.3 70B, Playwright, BeautifulSoup, Google Sheets API",
+            highlights=[
+                "Built an agentic workflow that scrapes job listings, evaluates eligibility with an LLM, "
+                "prepares application responses, automates form filling, and logs applications to Google Sheets.",
+                "Implemented human-in-the-loop handling for CAPTCHAs, login walls, OTP/2FA, file uploads, "
+                "and custom-essay steps, with modular orchestration and CV parsing.",
+            ],
+        ),
+        Project(
+            name="DocuMind",
+            description="Context-Aware RAG Chatbot (2026)",
+            tech_stack="LangChain, FAISS, SentenceTransformers, Hugging Face, Streamlit",
+            highlights=[
+                "Built a document-grounded conversational RAG pipeline with overlapping chunking, MiniLM embeddings, "
+                "FAISS top-k retrieval, sliding-window memory, and local/API LLM inference; reported >85% top-3 chunk relevance.",
             ],
         ),
         Project(
