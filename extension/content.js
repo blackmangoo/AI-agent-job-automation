@@ -100,11 +100,14 @@ function updateStats() {
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === "start") {
     isRunning = true;
-    config = request.config;
+    config = request.config || {};
+    if (config.backendUrl) {
+      backendUrl = config.backendUrl;
+    }
     log("Starting auto-apply process...");
     stats = { scanned: 0, applied: 0 };
     updateStats();
-    
+
     // Check if we are on a job application page directly
     if (isIndeedApplyPage()) {
       log("Detected Indeed Apply page. Starting auto-filler...");
@@ -304,18 +307,62 @@ async function autoFillJobApplication() {
   if (!isRunning) return;
 
   log("Starting auto-filler for the current application step...");
-  
-  // Fetch candidate profile and current analysis
+
   try {
     const candidate = await callBackend("/candidate");
+    if (!candidate) {
+      log(`Error: Could not retrieve candidate profile from backend (${backendUrl}). Make sure "python server.py" is running.`);
+      isRunning = false;
+      chrome.storage.local.set({ botRunning: false });
+      return;
+    }
 
     const stored = await chrome.storage.local.get(["currentLlmResponse", "currentJobData"]);
-    const llmResponse = stored.currentLlmResponse;
-    const jobData = stored.currentJobData;
+    let llmResponse = stored.currentLlmResponse;
+    let jobData = stored.currentJobData;
 
-    if (!candidate || !llmResponse) {
-      log("Error: Candidate profile or LLM response missing.");
-      return;
+    // Fallback if user clicked Start Bot directly on an apply page without scanning
+    if (!llmResponse) {
+      log("Direct apply detected: Extracting job details from page header...");
+      const extractedTitle = getElementText([
+        "[data-testid='job-title']",
+        ".ia-JobHeader-title",
+        ".jobsearch-JobInfoHeader-title",
+        "h1",
+        "h2",
+        ".job-title"
+      ]) || "Position";
+
+      const extractedCompany = getElementText([
+        "[data-testid='company-name']",
+        ".ia-JobHeader-company",
+        ".jobsearch-InlineCompanyRating",
+        ".company-name",
+        "div[class*='company']"
+      ]) || "Employer";
+
+      jobData = {
+        job_title: extractedTitle,
+        company: extractedCompany,
+        url: window.location.href
+      };
+
+      llmResponse = {
+        eligible: true,
+        confidence_score: 1.0,
+        eligibility_reason: "Direct application initiated by user",
+        resume_objective: `AI/ML Engineer seeking the ${extractedTitle} role at ${extractedCompany} to apply hands-on experience in machine learning, Python, and model deployment.`,
+        cover_note: `I am writing to apply for the ${extractedTitle} position at ${extractedCompany}. With a background in AI/ML from FAST-NUCES and experience building end-to-end applications, I look forward to contributing.`,
+        screening_answers: []
+      };
+
+      await chrome.storage.local.set({
+        currentJobData: jobData,
+        currentLlmResponse: llmResponse
+      });
+
+      log(`Loaded candidate profile for: ${candidate.full_name}`);
+      log(`Applying directly to: ${extractedTitle} at ${extractedCompany}`);
     }
 
     // Wait up to 5 seconds for React form fields to render
@@ -329,31 +376,30 @@ async function autoFillJobApplication() {
 
     log(`Found ${formFields.length} interactive form fields on this page.`);
     if (formFields.length === 0) {
-      log("No fields to fill on this step.");
-      return;
+      log("No editable fields on this step.");
+    } else {
+      // 1. Fill standard fields
+      await fillStandardFields(formFields, candidate);
+
+      // 2. Fill screening question answers
+      await fillScreeningQuestions(formFields, llmResponse);
+
+      // 2b. Query AI Brain to answer any custom screening questions on the screen
+      await fillQuestionsWithBrain(formFields, llmResponse);
+
+      // 3. Fill resume objective and cover note if fields exist
+      await fillOptionalTextFields(formFields, llmResponse);
+
+      log("Finished filling fields on this step.");
     }
-
-    // 1. Fill standard fields
-    await fillStandardFields(formFields, candidate);
-
-    // 2. Fill screening question answers
-    await fillScreeningQuestions(formFields, llmResponse);
-
-    // 2b. Query AI Brain to answer any custom screening questions on the screen
-    await fillQuestionsWithBrain(formFields, llmResponse);
-
-    // 3. Fill resume objective and cover note if fields exist
-    await fillOptionalTextFields(formFields, llmResponse);
-
-    log("Finished filling fields on this step. Please review.");
 
     // Check if we are on a final review/submit step
     const submitBtn = findButtonByText(["Submit your application", "Submit application", "Submit"]);
     const continueBtn = findButtonByText(["Continue", "Next", "Review"]);
 
     if (submitBtn) {
-      log("🎉 REVIEW REQUIRED: Submit button detected. Please review the page and click Submit manually.");
-      
+      log("🎉 REVIEW REQUIRED: Submit button detected. Please review the form and click Submit manually.");
+
       // Log success to local backend
       await callBackend("/log", {
         method: "POST",
@@ -363,7 +409,7 @@ async function autoFillJobApplication() {
           status: "applied"
         }
       });
-      
+
       stats.applied++;
       updateStats();
 
@@ -372,6 +418,21 @@ async function autoFillJobApplication() {
       chrome.storage.local.set({ botRunning: false });
       log("Bot paused for user review. Submit when ready.");
     } else if (continueBtn) {
+      log("Clicking 'Continue' to move to next step...");
+      await simulateClick(continueBtn);
+
+      // Wait for next React step to transition and auto-fill it
+      await sleep(2500);
+      if (isRunning && isIndeedApplyPage()) {
+        log("Proceeding to next step...");
+        autoFillJobApplication();
+      }
+    }
+
+  } catch (err) {
+    log(`Error during form filling: ${err}`);
+  }
+}
       log("Clicking 'Continue' to move to next step...");
       await simulateClick(continueBtn);
 
