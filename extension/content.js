@@ -459,21 +459,6 @@ async function autoFillJobApplication() {
       await sleep(2500);
       if (isRunning && isIndeedApplyPage()) {
         log("Proceeding to next step...");
-        autoFillJobApplication();
-      }
-    }
-
-  } catch (err) {
-    log(`Error during form filling: ${err}`);
-  }
-}
-      log("Clicking 'Continue' to move to next step...");
-      await simulateClick(continueBtn);
-
-      // Wait for SPA dynamic page update and resume filling if still running
-      await sleep(2500);
-      if (isRunning) {
-        log("Proceeding with next form step...");
         await autoFillJobApplication();
       }
     }
