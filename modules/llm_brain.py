@@ -404,19 +404,42 @@ CANDIDATE PROFILE:
 CV TEXT:
 {cv_text}
 
+CANDIDATE FACTS & SCREENING GUIDELINES:
+- Name: Ammar Akbar
+- Degree: Bachelor of Science in Artificial Intelligence from FAST-NUCES (Expected Dec 2026)
+- Location & Commute: Lahore, Pakistan & Islamabad, Pakistan (Authorized to work in Pakistan, fully comfortable working on-site in Lahore or Islamabad, hybrid, or remote)
+- Work Authorization: Legally authorized to work in Pakistan. Does NOT require visa sponsorship.
+- Years of Experience (return JUST the integer number when asked for years or numbers):
+  * Python: 2
+  * Machine Learning / Deep Learning: 2
+  * PyTorch: 2
+  * Computer Vision (YOLO): 2
+  * NLP / RAG / LLMs: 2
+  * C++: 2
+  * FastAPI / Backend APIs: 2
+  * Flutter / Mobile: 1
+  * SQL / Databases: 2
+  * Overall relevant technical experience: 2
+- Notice Period / Availability: Immediately or 1 week
+- English Proficiency: Professional / Fluent
+- Degree Questions: Yes, has a Bachelor's degree (BS in Artificial Intelligence)
+- Shift / Schedule: Flexible, Full-time
+
 OUTPUT FORMAT (STRICT JSON):
 Respond with a JSON object mapping each question EXACTLY to its answer.
 Example format:
 {{
-  "Question 1 text?": "Answer 1",
-  "Question 2 text?": "Answer 2"
+  "How many years of Python experience do you have?": "2",
+  "Are you legally authorized to work in Pakistan?": "Yes",
+  "Will you require visa sponsorship?": "No",
+  "What is your highest level of education completed?": "Bachelor's Degree"
 }}
 
 Rules:
-- Keep answers precise and short.
-- For yes/no questions, reply exactly with "Yes" or "No".
-- For experience questions, compute years of experience using their work highlights.
-- For cities/locations, answer based on the candidate's location (Islamabad / Lahore, Pakistan).
+- Keep answers precise, concise, and professional.
+- For yes/no questions, reply with EXACTLY "Yes" or "No".
+- For experience questions asking for years, reply with ONLY the number (e.g. "2") so it works in both number inputs and text fields.
+- For city/location, answer "Lahore" or "Islamabad" depending on context.
 - Output ONLY valid JSON. No markdown fences, no explanations.
 """
 

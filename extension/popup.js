@@ -17,40 +17,92 @@ const btnStart = document.getElementById("btnStart");
 const btnStop = document.getElementById("btnStop");
 const statsScanned = document.getElementById("statsScanned");
 const statsApplied = document.getElementById("statsApplied");
-const settingDryRun = document.getElementById("settingDryRun");
+const statsSuccessRate = document.getElementById("statsSuccessRate");
+const settingAutoSubmit = document.getElementById("settingAutoSubmit");
 const settingSkipIneligible = document.getElementById("settingSkipIneligible");
 const terminal = document.getElementById("terminal");
 const btnClearLogs = document.getElementById("btnClearLogs");
+const activityRole = document.getElementById("activityRole");
+const activityStatusText = document.getElementById("activityStatusText");
+const activityTime = document.getElementById("activityTime");
+
+function updateSuccessRate(scanned, applied) {
+  if (!statsSuccessRate) return;
+  const s = parseInt(scanned) || 0;
+  const a = parseInt(applied) || 0;
+  if (s === 0) {
+    statsSuccessRate.textContent = "0%";
+  } else {
+    statsSuccessRate.textContent = Math.round((a / s) * 100) + "%";
+  }
+}
 
 // Load stored settings, stats, and active backend URL
-chrome.storage.local.get(["dryRun", "skipIneligible", "stats", "logs", "botRunning", "activeBackendUrl"], (res) => {
-  if (res.dryRun !== undefined) settingDryRun.checked = res.dryRun;
-  if (res.skipIneligible !== undefined) settingSkipIneligible.checked = res.skipIneligible;
-  if (res.activeBackendUrl) activeBackendUrl = res.activeBackendUrl;
-  if (res.stats) {
-    statsScanned.textContent = res.stats.scanned || 0;
-    statsApplied.textContent = res.stats.applied || 0;
+chrome.storage.local.get([
+  "autoSubmit",
+  "dryRun",
+  "skipIneligible",
+  "stats",
+  "logs",
+  "botRunning",
+  "activeBackendUrl",
+  "currentActivity"
+], (res) => {
+  // autoSubmit defaults to true (dryRun = false)
+  if (res.autoSubmit !== undefined) {
+    settingAutoSubmit.checked = res.autoSubmit;
+  } else if (res.dryRun !== undefined) {
+    settingAutoSubmit.checked = !res.dryRun;
+  } else {
+    settingAutoSubmit.checked = true;
   }
+
+  if (res.skipIneligible !== undefined) {
+    settingSkipIneligible.checked = res.skipIneligible;
+  } else {
+    settingSkipIneligible.checked = true;
+  }
+
+  if (res.activeBackendUrl) activeBackendUrl = res.activeBackendUrl;
+
+  const scanned = (res.stats && res.stats.scanned) || 0;
+  const applied = (res.stats && res.stats.applied) || 0;
+  statsScanned.textContent = scanned;
+  statsApplied.textContent = applied;
+  updateSuccessRate(scanned, applied);
+
+  if (res.currentActivity) {
+    if (activityRole && res.currentActivity.role) activityRole.textContent = res.currentActivity.role;
+    if (activityStatusText && res.currentActivity.status) activityStatusText.textContent = res.currentActivity.status;
+    if (activityTime) activityTime.textContent = res.currentActivity.time || "Active";
+  }
+
   if (res.logs && res.logs.length > 0) {
     terminal.textContent = res.logs.join("\n");
     scrollToBottom();
   }
+
   if (res.botRunning) {
     toggleBotUI(true);
   }
 });
 
 // Settings change handlers
-settingDryRun.addEventListener("change", () => {
-  chrome.storage.local.set({ dryRun: settingDryRun.checked });
+settingAutoSubmit.addEventListener("change", () => {
+  const autoSubmit = settingAutoSubmit.checked;
+  chrome.storage.local.set({
+    autoSubmit: autoSubmit,
+    dryRun: !autoSubmit
+  });
 });
+
 settingSkipIneligible.addEventListener("change", () => {
   chrome.storage.local.set({ skipIneligible: settingSkipIneligible.checked });
 });
 
 // Clear logs button
 btnClearLogs.addEventListener("click", () => {
-  terminal.textContent = "";
+  terminal.textContent = "Logs cleared.";
   chrome.storage.local.set({ logs: [] });
 });
 
@@ -63,7 +115,7 @@ async function pingUrl(url) {
       if (data.status === "online") return true;
     }
   } catch (e) {
-    // Timeout or network error
+    // Timeout or connection error
   }
   return false;
 }
@@ -121,7 +173,7 @@ function setOnline(url) {
   activeBackendUrl = url;
   chrome.storage.local.set({ activeBackendUrl: url });
   statusDot.className = "status-dot online";
-  statusText.textContent = "Backend Online";
+  statusText.textContent = "Online";
   chrome.storage.local.get("botRunning", (res) => {
     if (!res.botRunning) btnStart.disabled = false;
   });
@@ -129,7 +181,7 @@ function setOnline(url) {
 
 function setOffline() {
   statusDot.className = "status-dot offline";
-  statusText.textContent = "Backend Offline";
+  statusText.textContent = "Offline";
   btnStart.disabled = true;
   chrome.storage.local.set({ botRunning: false });
   toggleBotUI(false);
@@ -149,9 +201,11 @@ function toggleBotUI(running) {
   if (running) {
     btnStart.style.display = "none";
     btnStop.style.display = "flex";
+    if (activityStatusText) activityStatusText.textContent = "Running auto-apply loop...";
   } else {
     btnStart.style.display = "flex";
     btnStop.style.display = "none";
+    if (activityStatusText) activityStatusText.textContent = "Ready";
   }
 }
 
@@ -160,8 +214,10 @@ btnStart.addEventListener("click", () => {
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const currentTab = tabs[0];
     if (currentTab && currentTab.url && (currentTab.url.includes("indeed.com") || currentTab.url.includes("smartapply"))) {
+      const isAutoSubmit = settingAutoSubmit.checked;
       const config = {
-        dryRun: settingDryRun.checked,
+        dryRun: !isAutoSubmit,
+        autoSubmit: isAutoSubmit,
         skipIneligible: settingSkipIneligible.checked,
         backendUrl: activeBackendUrl
       };
@@ -170,16 +226,17 @@ btnStart.addEventListener("click", () => {
       chrome.storage.local.set({
         botRunning: true,
         dryRun: config.dryRun,
+        autoSubmit: config.autoSubmit,
         skipIneligible: config.skipIneligible,
         activeBackendUrl: activeBackendUrl,
         triggerTime: Date.now()
       });
       toggleBotUI(true);
-      logToTerminal("Starting bot...");
+      logToTerminal("Starting bot on " + (currentTab.title ? currentTab.title.substring(0, 30) : "Indeed tab") + "...");
 
       const tabId = currentTab.id;
 
-      // Also deliver message directly
+      // Deliver start signal
       chrome.tabs.sendMessage(tabId, { action: "start", config: config }, (response) => {
         if (chrome.runtime.lastError) {
           // Content script not loaded yet (e.g. extension reloaded). Inject into top frame!
@@ -198,7 +255,7 @@ btnStart.addEventListener("click", () => {
                     // Handled automatically by storage.onChanged
                   }
                 });
-              }, 150);
+              }, 100);
             }
           });
         }
@@ -216,7 +273,9 @@ btnStop.addEventListener("click", () => {
 
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     if (tabs[0]) {
-      chrome.tabs.sendMessage(tabs[0].id, { action: "stop" });
+      chrome.tabs.sendMessage(tabs[0].id, { action: "stop" }, () => {
+        if (chrome.runtime.lastError) { /* ignore */ }
+      });
     }
   });
   logToTerminal("Bot stopped by user.");
@@ -242,7 +301,21 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     terminal.textContent += `\n${request.message}`;
     scrollToBottom();
   } else if (request.action === "updateStats") {
-    statsScanned.textContent = request.stats.scanned;
-    statsApplied.textContent = request.stats.applied;
+    const s = request.stats.scanned || 0;
+    const a = request.stats.applied || 0;
+    statsScanned.textContent = s;
+    statsApplied.textContent = a;
+    updateSuccessRate(s, a);
+  } else if (request.action === "updateActivity") {
+    if (activityRole && request.role) activityRole.textContent = request.role;
+    if (activityStatusText && request.status) activityStatusText.textContent = request.status;
+    if (activityTime) activityTime.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    chrome.storage.local.set({
+      currentActivity: {
+        role: request.role,
+        status: request.status,
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      }
+    });
   }
 });

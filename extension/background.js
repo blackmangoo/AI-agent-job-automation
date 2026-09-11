@@ -89,4 +89,30 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     })();
     return true; // Keep channel open for async response
   }
+
+  if (request.action === "jobAppliedReturn") {
+    const senderTabId = sender.tab ? sender.tab.id : null;
+    chrome.tabs.query({ url: ["*://*.indeed.com/jobs*", "*://*.indeed.com/?*"] }, (tabs) => {
+      if (tabs && tabs.length > 0) {
+        const searchTab = tabs[0];
+        // Focus the search tab
+        chrome.tabs.update(searchTab.id, { active: true }).catch(() => {});
+        // Tell search tab to advance to next job
+        setTimeout(() => {
+          chrome.tabs.sendMessage(searchTab.id, { action: "resumeNextJob" }, () => {
+            if (chrome.runtime.lastError) { /* ignore */ }
+          });
+        }, 500);
+      }
+    });
+
+    // Close the apply tab if it was opened as a separate tab
+    if (senderTabId) {
+      setTimeout(() => {
+        chrome.tabs.remove(senderTabId).catch(() => {});
+      }, 1500);
+    }
+    sendResponse({ success: true });
+    return true;
+  }
 });
