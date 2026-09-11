@@ -1,4 +1,20 @@
 // Indeed Auto-Applier Agent - Content Script
+(function() {
+  if (window.__INDEED_AGENT_ACTIVE__) return;
+  window.__INDEED_AGENT_ACTIVE__ = true;
+
+  // Frame filter: only run in top window or genuine Indeed apply iframes
+  const isTopWindow = (window.top === window.self);
+  const isApplyIframe = !isTopWindow && (
+    window.location.href.includes('apply.indeed.com') ||
+    window.location.href.includes('smartapply') ||
+    window.location.href.includes('/ia/') ||
+    window.location.href.includes('indeedapply=1')
+  );
+
+  if (!isTopWindow && !isApplyIframe) {
+    return; // Ignore third-party tracking, analytics, and advertising iframes
+  }
 let isRunning = false;
 let config = { dryRun: true, skipIneligible: true };
 let stats = { scanned: 0, applied: 0 };
@@ -110,29 +126,42 @@ function updateStats() {
   chrome.storage.local.set({ stats: stats });
 }
 
+function triggerStart(newConfig) {
+  if (isRunning) return;
+  isRunning = true;
+  if (newConfig) {
+    config = {
+      dryRun: newConfig.dryRun !== false,
+      skipIneligible: newConfig.skipIneligible !== false,
+      backendUrl: newConfig.backendUrl || backendUrl
+    };
+    if (newConfig.backendUrl) backendUrl = newConfig.backendUrl;
+  }
+  log("Starting auto-apply process...");
+  stats = { scanned: 0, applied: 0 };
+  updateStats();
+
+  if (isIndeedApplyPage()) {
+    log("Detected Indeed Apply page. Starting auto-filler...");
+    autoFillJobApplication();
+  } else if (isTopWindow) {
+    startJobCrawl();
+  }
+}
+
+function triggerStop() {
+  if (!isRunning) return;
+  isRunning = false;
+  log("Bot stopped.");
+}
+
 // Listen for commands from the popup
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === "start") {
-    isRunning = true;
-    config = request.config || {};
-    if (config.backendUrl) {
-      backendUrl = config.backendUrl;
-    }
-    log("Starting auto-apply process...");
-    stats = { scanned: 0, applied: 0 };
-    updateStats();
-
-    // Check if we are on a job application page directly
-    if (isIndeedApplyPage()) {
-      log("Detected Indeed Apply page. Starting auto-filler...");
-      autoFillJobApplication();
-    } else {
-      startJobCrawl();
-    }
+    triggerStart(request.config);
     sendResponse({ status: "started" });
   } else if (request.action === "stop") {
-    isRunning = false;
-    log("Stopping auto-apply process...");
+    triggerStop();
     sendResponse({ status: "stopped" });
   }
 });
@@ -141,32 +170,15 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "local" && changes.botRunning) {
     if (changes.botRunning.newValue === true) {
-      if (!isRunning) {
-        chrome.storage.local.get(["dryRun", "skipIneligible", "activeBackendUrl"], (res) => {
-          isRunning = true;
-          config = {
-            dryRun: res.dryRun !== false,
-            skipIneligible: res.skipIneligible !== false,
-            backendUrl: res.activeBackendUrl || backendUrl
-          };
-          if (res.activeBackendUrl) backendUrl = res.activeBackendUrl;
-          log("Bot started successfully. Scanning page...");
-          stats = { scanned: 0, applied: 0 };
-          updateStats();
-
-          if (isIndeedApplyPage()) {
-            log("Detected Indeed Apply page. Starting auto-filler...");
-            autoFillJobApplication();
-          } else {
-            startJobCrawl();
-          }
+      chrome.storage.local.get(["dryRun", "skipIneligible", "activeBackendUrl"], (res) => {
+        triggerStart({
+          dryRun: res.dryRun,
+          skipIneligible: res.skipIneligible,
+          backendUrl: res.activeBackendUrl
         });
-      }
+      });
     } else if (changes.botRunning.newValue === false) {
-      if (isRunning) {
-        isRunning = false;
-        log("Bot stopped.");
-      }
+      triggerStop();
     }
   }
 });
@@ -531,12 +543,26 @@ function findApplyButton() {
     "button#indeedApplyButton",
     "button[data-testid='indeedApplyButton']",
     "button.jobsearch-IndeedApplyButton-newDesign",
+    "button[aria-label*='Apply with Indeed']",
     "button[aria-label*='Apply now']",
-    "button.ia-IndeedApplyButton"
+    "button.ia-IndeedApplyButton",
+    "#indeedApplyButton",
+    "[data-testid='indeedApplyButton']",
+    ".jobsearch-IndeedApplyButton-newDesign",
+    "a[data-testid='indeedApplyButton']"
   ];
   for (const s of selectors) {
     const btn = document.querySelector(s);
-    if (btn) return btn;
+    if (btn && (btn.offsetWidth > 0 || btn.offsetHeight > 0)) return btn;
+  }
+
+  // Look for any button or link containing "Apply with Indeed" or "Apply now"
+  const candidates = Array.from(document.querySelectorAll("button, a, [role='button']"));
+  for (const el of candidates) {
+    const txt = (el.innerText || "").trim().toLowerCase();
+    if (txt === "apply with indeed" || txt === "apply now" || txt.includes("apply with indeed") || txt.includes("apply now")) {
+      if (el.offsetWidth > 0 || el.offsetHeight > 0) return el;
+    }
   }
   return null;
 }
@@ -819,3 +845,5 @@ async function fillQuestionsWithBrain(fields, llmResponse) {
     log(`Error calling AI Brain: ${err}`);
   }
 }
+
+})();
