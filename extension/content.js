@@ -266,8 +266,8 @@ async function processNextJob() {
     const clickTarget = card.querySelector("h2.jobTitle, a.jcs-JobTitle") || card;
     await simulateClick(clickTarget);
 
-    // Wait for the job description panel to load
-    await sleep(2500);
+    // Fast wait for the job description panel to render
+    await sleep(600);
 
     // Scrape details from the page
     const jobTitle = getElementText([
@@ -290,7 +290,7 @@ async function processNextJob() {
       log("Error: Could not extract job description. Trying next job.");
       stats.scanned++;
       updateStats();
-      setTimeout(processNextJob, 1000);
+      setTimeout(processNextJob, 500);
       return;
     }
 
@@ -314,50 +314,46 @@ async function processNextJob() {
 
     if (!llmResponse.eligible && config.skipIneligible) {
       log("Job not eligible. Skipping...");
-      setTimeout(processNextJob, 2000);
+      setTimeout(processNextJob, 400);
       return;
     }
 
     // Store analysis response for the form filler
-    await chrome.storage.local.set({ 
+    await chrome.storage.local.set({
       currentJobData: { job_title: jobTitle, company: company, url: jobUrl },
-      currentLlmResponse: llmResponse 
+      currentLlmResponse: llmResponse
     });
 
     if (config.dryRun) {
       log(`[DRY RUN] Would apply to: ${jobTitle} at ${company}`);
-      setTimeout(processNextJob, 2500);
+      setTimeout(processNextJob, 600);
       return;
     }
 
     // Look for Apply button
     const applyButton = findApplyButton();
     if (!applyButton) {
-      log("Apply button not found. Maybe already applied or external site.");
-      setTimeout(processNextJob, 2000);
+      log("Apply button not found (already applied or external company site).");
+      setTimeout(processNextJob, 500);
       return;
     }
 
-    log(`Found Apply button: ${applyButton.outerHTML.substring(0, 150)}...`);
-    log("Waiting for React event listeners to bind...");
-    await sleep(1000); // Wait for React props to attach
-    
-    log("Simulating click on Apply button...");
+    log(`Found Apply button: clicking...`);
+    await sleep(200);
     await simulateClick(applyButton);
-    
-    // Give modal/new tab time to open
-    await sleep(3500);
-    
-    // Check if modal popped up on the same page, otherwise we will wait for redirection
+
+    // Fast wait for application modal or redirect
+    await sleep(1500);
+
     if (isIndeedApplyPage()) {
-      autoFillJobApplication();
+      await autoFillJobApplication();
     } else {
-      log("Navigating to Indeed Apply page. The bot will automatically resume there.");
+      log("Opened Indeed Apply. Bot will auto-fill on the application step.");
     }
 
   } catch (err) {
     log(`Error processing job: ${err}`);
-    setTimeout(processNextJob, 2000);
+    setTimeout(processNextJob, 800);
   }
 }
 
@@ -473,37 +469,54 @@ async function autoFillJobApplication() {
     }
 
     // Check if we are on a final review/submit step
-    const submitBtn = findButtonByText(["Submit your application", "Submit application", "Submit"]);
-    const continueBtn = findButtonByText(["Continue", "Next", "Review"]);
+    const submitBtn = findSubmitButton();
+    const continueBtn = findButtonByText(["Continue", "Next", "Review", "Review your application"]);
 
     if (submitBtn) {
-      log("🎉 REVIEW REQUIRED: Submit button detected. Please review the form and click Submit manually.");
+      if (!config.dryRun) {
+        log("🚀 Final step reached: Auto-submitting application...");
+        await simulateClick(submitBtn);
+        await sleep(1000);
+        log("✅ Application auto-submitted successfully!");
+      } else {
+        log("🎉 Form filled! Dry run enabled — submit paused for your review.");
+      }
 
-      // Log success to local backend
-      await callBackend("/log", {
+      // Log success to local backend asynchronously
+      callBackend("/log", {
         method: "POST",
         body: {
           job_data: jobData,
           llm_response: llmResponse,
-          status: "applied"
+          status: config.dryRun ? "form_filled" : "applied"
         }
       });
 
       stats.applied++;
       updateStats();
 
-      // Stop bot so it doesn't navigate away before user review
-      isRunning = false;
-      chrome.storage.local.set({ botRunning: false });
-      log("Bot paused for user review. Submit when ready.");
+      // If dry run, pause for review. If auto-apply, advance to next job
+      if (config.dryRun) {
+        isRunning = false;
+        chrome.storage.local.set({ botRunning: false });
+      } else {
+        await sleep(1500);
+        if (isTopWindow) {
+          processNextJob();
+        } else {
+          isRunning = false;
+          chrome.storage.local.set({ botRunning: false });
+          log("Application completed.");
+        }
+      }
     } else if (continueBtn) {
-      log("Clicking 'Continue' to move to next step...");
+      log("Clicking 'Continue' to advance to next step...");
       await simulateClick(continueBtn);
 
-      // Wait for next React step to transition and auto-fill it
-      await sleep(2500);
+      // Fast wait for next React step to transition
+      await sleep(1000);
       if (isRunning && isIndeedApplyPage()) {
-        log("Proceeding to next step...");
+        log("Filling next step...");
         await autoFillJobApplication();
       }
     }
@@ -514,6 +527,34 @@ async function autoFillJobApplication() {
 }
 
 // --- HELPERS ---
+
+function findSubmitButton() {
+  const selectors = [
+    "button[data-testid='submit-button']",
+    "button#submitButton",
+    "button.ia-submitButton",
+    "button[aria-label*='Submit your application']",
+    "button[aria-label*='Submit application']",
+    "button[aria-label*='Submit']",
+    "[data-testid='submit-button']",
+    "#submitButton"
+  ];
+  for (const s of selectors) {
+    try {
+      const btn = document.querySelector(s);
+      if (btn && (btn.offsetWidth > 0 || btn.offsetHeight > 0)) return btn;
+    } catch(e) {}
+  }
+
+  const buttons = Array.from(document.querySelectorAll("button, a[role='button'], input[type='submit']"));
+  for (const btn of buttons) {
+    const txt = (btn.innerText || btn.value || "").trim().toLowerCase();
+    if (txt === "submit your application" || txt === "submit application" || txt === "submit" || txt.startsWith("submit your application") || txt.startsWith("submit application")) {
+      if (btn.offsetWidth > 0 || btn.offsetHeight > 0) return btn;
+    }
+  }
+  return null;
+}
 
 async function simulateClick(element) {
   if (!element) return;

@@ -173,18 +173,23 @@ class APIRequestHandler(http.server.BaseHTTPRequestHandler):
                 job_data = data.get("job_data", {})
                 llm_response = data.get("llm_response", {})
                 status = data.get("status", "applied")
-                
+
                 logger.info(f"Logging application for: {job_data.get('job_title')} at {job_data.get('company')}")
-                
-                # Log to Google Sheets
-                try:
-                    log_application(job_data, llm_response, status)
-                except Exception as sheets_err:
-                    logger.error(f"Failed to log to Google Sheets: {sheets_err}")
-                
-                # Save local JSON log
-                save_local_log(job_data, llm_response, status)
-                
+
+                # Run Google Sheets and local log in a background thread for zero-latency response
+                def _do_log(jd, lr, st):
+                    try:
+                        log_application(jd, lr, st)
+                    except Exception as s_err:
+                        logger.warning(f"Google Sheets log failed: {s_err}")
+                    try:
+                        save_local_log(jd, lr, st)
+                    except Exception as f_err:
+                        logger.warning(f"Local file log failed: {f_err}")
+
+                import threading
+                threading.Thread(target=_do_log, args=(job_data, llm_response, status), daemon=True).start()
+
                 self._set_headers(200)
                 self.wfile.write(json.dumps({"status": "success"}).encode("utf-8"))
             except Exception as e:
