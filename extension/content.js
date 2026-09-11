@@ -123,12 +123,58 @@
     chrome.storage.local.set({ stats: stats });
   }
 
+  function updateAgentHud(role, status) {
+    if (!isTopWindow) return;
+    let hud = document.getElementById("__indeed_agent_hud__");
+    if (!hud) {
+      hud = document.createElement("div");
+      hud.id = "__indeed_agent_hud__";
+      hud.style.cssText = `
+        position: fixed;
+        bottom: 24px;
+        right: 24px;
+        background: rgba(11, 9, 20, 0.94);
+        color: #f8fafc;
+        border: 1px solid rgba(0, 245, 160, 0.4);
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.7), 0 0 20px rgba(0, 245, 160, 0.2);
+        border-radius: 14px;
+        padding: 12px 18px;
+        z-index: 2147483646;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        backdrop-filter: blur(16px);
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-width: 280px;
+        max-width: 420px;
+        transition: all 0.25s ease;
+      `;
+      document.body.appendChild(hud);
+    }
+    hud.innerHTML = `
+      <div style="width: 32px; height: 32px; border-radius: 10px; background: linear-gradient(135deg, #00f5a0, #00d9f5); display:flex; align-items:center; justify-content:center; font-size:16px; flex-shrink:0;">
+        🤖
+      </div>
+      <div style="flex: 1; overflow: hidden;">
+        <div style="font-size: 10px; font-weight: 700; color: #38bdf8; text-transform: uppercase; letter-spacing: 0.6px;">AI Job Agent Active</div>
+        <div style="font-size: 13px; font-weight: 600; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${role || 'Scanning Indeed feed...'}</div>
+        <div style="font-size: 11px; color: #94a3b8; margin-top: 1px;">${status || 'Active'}</div>
+      </div>
+    `;
+  }
+
+  function removeAgentHud() {
+    const hud = document.getElementById("__indeed_agent_hud__");
+    if (hud) hud.remove();
+  }
+
   function reportActivity(role, status) {
     try {
       chrome.runtime.sendMessage({ action: "updateActivity", role: role, status: status }, () => {
         if (chrome.runtime.lastError) { /* ignore */ }
       });
     } catch (e) {}
+    updateAgentHud(role, status);
   }
 
   function triggerStart(newConfig) {
@@ -158,6 +204,7 @@
     if (!isRunning) return;
     isRunning = false;
     clearTimeout(watchdogTimer);
+    removeAgentHud();
     reportActivity("Idle", "Bot stopped by user");
     log("Bot stopped.");
   }
@@ -482,7 +529,7 @@
         await fillScreeningQuestions(formFields, llmResponse);
 
         // 2b. Query AI Brain to answer custom screening questions accurately
-        await fillQuestionsWithBrain(formFields, llmResponse);
+        await fillQuestionsWithBrain(formFields, llmResponse, jobData);
 
         // 3. Fill optional fields (summary, cover letter)
         await fillOptionalTextFields(formFields, llmResponse);
@@ -490,11 +537,49 @@
         log("Finished filling fields on this step.");
       }
 
-      // Check for final Submit vs Continue buttons
-      const submitBtn = findSubmitButton();
-      const continueBtn = findButtonByText(["Continue", "Next", "Review", "Review your application"]);
+      // Find the action button to advance or submit this form step
+      let action = null;
+      for (let attempt = 0; attempt < 6; attempt++) {
+        action = findFormActionButton();
+        if (action && !action.element.disabled) break;
+        await sleep(300);
+      }
 
-      if (submitBtn) {
+      if (!action) {
+        log("No forward action button found. Checking if application is already completed or if manual review needed.");
+        const closeBtn = document.querySelector("button[aria-label='Close'], .ia-BasePage-closeButton");
+        if (closeBtn) {
+          log("Closing completed dialog and advancing to next listing...");
+          await closeAnyOpenModal();
+          if (isTopWindow) setTimeout(processNextJob, 500);
+        }
+        return;
+      }
+
+      if (action.type === "submit") {
+        const submitBtn = action.element;
+        // Human-in-the-Loop: Check if reCAPTCHA or Cloudflare challenge is blocking submission
+        if (isCaptchaPresent() && !isCaptchaSolved()) {
+          log("🔒 CAPTCHA detected on submission step! Waiting for verification...");
+          reportActivity("Verification", "Please solve the 'I'm not a robot' CAPTCHA");
+          showCaptchaBanner();
+          playAlertChime();
+
+          // Attempt gentle auto-click on the checkbox
+          tryAutoClickCaptcha();
+
+          // Wait until user checks/solves the CAPTCHA
+          const solved = await waitForCaptchaResolution(120000);
+          hideCaptchaBanner();
+
+          if (solved) {
+            log("✅ Verification confirmed! Submitting application...");
+            await sleep(400);
+          } else {
+            log("⚠️ CAPTCHA wait timed out. Attempting submit anyway...");
+          }
+        }
+
         if (!config.dryRun) {
           reportActivity(`${jobData.job_title} @ ${jobData.company}`, "🚀 Auto-submitting application...");
           log("🚀 Final step reached: Auto-submitting application...");
@@ -538,9 +623,11 @@
             chrome.runtime.sendMessage({ action: "jobAppliedReturn" });
           }
         }
-      } else if (continueBtn) {
-        reportActivity(`${jobData.job_title} @ ${jobData.company}`, "Advancing to next step...");
-        log("Clicking 'Continue' to advance to next step...");
+      } else if (action.type === "continue") {
+        const continueBtn = action.element;
+        const btnText = (continueBtn.innerText || continueBtn.value || "Continue").trim();
+        reportActivity(`${jobData.job_title} @ ${jobData.company}`, `Advancing (${btnText})...`);
+        log(`Clicking '${btnText}' to advance to next step...`);
         await simulateClick(continueBtn);
 
         await sleep(900);
@@ -555,6 +642,125 @@
   }
 
   // --- HELPERS ---
+
+  function isCaptchaPresent() {
+    const selectors = [
+      "iframe[src*='recaptcha']",
+      "iframe[src*='hcaptcha']",
+      "iframe[src*='turnstile']",
+      "iframe[src*='challenges.cloudflare.com']",
+      "div.g-recaptcha",
+      "div.cf-turnstile",
+      "#captcha",
+      "div[class*='captcha']"
+    ];
+    for (const s of selectors) {
+      try {
+        const el = document.querySelector(s);
+        if (el && (el.offsetWidth > 0 || el.offsetHeight > 0)) return true;
+      } catch (e) {}
+    }
+    return false;
+  }
+
+  function isCaptchaSolved() {
+    // 1. Google reCAPTCHA response token
+    const recaptchaToken = document.querySelector("textarea[name='g-recaptcha-response'], #g-recaptcha-response");
+    if (recaptchaToken && recaptchaToken.value && recaptchaToken.value.trim().length > 10) return true;
+
+    // 2. Cloudflare Turnstile token
+    const turnstileToken = document.querySelector("input[name='cf-turnstile-response']");
+    if (turnstileToken && turnstileToken.value && turnstileToken.value.trim().length > 10) return true;
+
+    // 3. hCaptcha token
+    const hcaptchaToken = document.querySelector("textarea[name='h-captcha-response']");
+    if (hcaptchaToken && hcaptchaToken.value && hcaptchaToken.value.trim().length > 10) return true;
+
+    return false;
+  }
+
+  function tryAutoClickCaptcha() {
+    const iframe = document.querySelector("iframe[src*='recaptcha/api2/anchor'], iframe[src*='recaptcha']");
+    if (iframe) {
+      try {
+        iframe.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        iframe.focus();
+        const rect = iframe.getBoundingClientRect();
+        const x = rect.left + 28;
+        const y = rect.top + 37;
+        iframe.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: x, clientY: y }));
+        iframe.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: x, clientY: y }));
+        iframe.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: x, clientY: y }));
+      } catch (e) {}
+    }
+  }
+
+  async function waitForCaptchaResolution(timeoutMs = 120000) {
+    const startTime = Date.now();
+    while (Date.now() - startTime < timeoutMs) {
+      if (!isRunning) return false;
+      if (isCaptchaSolved()) return true;
+      if (!isCaptchaPresent()) return true;
+      await sleep(400);
+    }
+    return false;
+  }
+
+  function showCaptchaBanner() {
+    let banner = document.getElementById("__indeed_captcha_banner__");
+    if (!banner) {
+      banner = document.createElement("div");
+      banner.id = "__indeed_captcha_banner__";
+      banner.style.cssText = `
+        position: fixed;
+        top: 24px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: linear-gradient(135deg, #1e1b4b 0%, #0f172a 100%);
+        color: #ffffff;
+        border: 1px solid rgba(0, 245, 160, 0.5);
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.7), 0 0 25px rgba(0, 245, 160, 0.25);
+        border-radius: 14px;
+        padding: 16px 24px;
+        z-index: 2147483647;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        backdrop-filter: blur(16px);
+      `;
+      banner.innerHTML = `
+        <span style="font-size: 24px;">🔒</span>
+        <div>
+          <div style="font-size: 15px; font-weight: 700; color: #38bdf8;">Human Verification Required</div>
+          <div style="font-size: 12px; color: #cbd5e1; margin-top: 3px;">Please complete the "I'm not a robot" check. The bot will automatically submit once verified!</div>
+        </div>
+      `;
+      document.body.appendChild(banner);
+    }
+  }
+
+  function hideCaptchaBanner() {
+    const banner = document.getElementById("__indeed_captcha_banner__");
+    if (banner) banner.remove();
+  }
+
+  function playAlertChime() {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(587.33, ctx.currentTime);
+      osc.frequency.setValueAtTime(880.00, ctx.currentTime + 0.15);
+      gain.gain.setValueAtTime(0.25, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.45);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.45);
+    } catch (e) {}
+  }
 
   async function closeAnyOpenModal() {
     const closeSelectors = [
@@ -582,6 +788,79 @@
       overlay.style.display = "none";
     }
     return false;
+  }
+
+  function findFormActionButton() {
+    // 1. Check for Submit button first
+    const submitBtn = findSubmitButton();
+    if (submitBtn) return { type: "submit", element: submitBtn };
+
+    // 2. Specific Indeed continue selectors
+    const continueSelectors = [
+      "button[data-testid='continue-button']",
+      "button#continueButton",
+      "button.ia-continueButton",
+      "button[data-testid='review-button']",
+      "button[data-testid='next-button']",
+      "button[aria-label*='continue' i]",
+      "button[aria-label*='next' i]",
+      "button[aria-label*='review' i]"
+    ];
+    for (const s of continueSelectors) {
+      try {
+        const el = document.querySelector(s);
+        if (el && (el.offsetWidth > 0 || el.offsetHeight > 0) && !el.disabled) {
+          return { type: "continue", element: el };
+        }
+      } catch (e) {}
+    }
+
+    // 3. Search all buttons by text for continue / next / review / save
+    const buttons = Array.from(document.querySelectorAll("button, a[role='button'], input[type='submit']"));
+    for (const btn of buttons) {
+      if (btn.offsetWidth === 0 && btn.offsetHeight === 0) continue;
+      if (btn.disabled) continue;
+
+      const txt = (btn.innerText || btn.value || "").trim().toLowerCase();
+      if (!txt) continue;
+
+      // Ignore back, cancel, close buttons
+      if (txt.includes("back") || txt.includes("cancel") || txt.includes("close") || txt.includes("exit")) {
+        continue;
+      }
+
+      if (txt.includes("submit") || txt.includes("apply now") || txt.includes("send application")) {
+        return { type: "submit", element: btn };
+      }
+
+      if (
+        txt.includes("continue") ||
+        txt.includes("next") ||
+        txt.includes("review") ||
+        txt.includes("save and") ||
+        txt.includes("save &") ||
+        txt.includes("proceed") ||
+        txt.includes("advance") ||
+        txt.includes("agree")
+      ) {
+        return { type: "continue", element: btn };
+      }
+    }
+
+    // 4. Form's primary button fallback
+    const form = document.querySelector("#indeedapply-modal form, div.ia-BasePage form, div[data-testid='apply-form'] form, form");
+    if (form) {
+      const primaryBtn = form.querySelector("button[type='submit'], input[type='submit'], button.ia-Button--primary, button:not([class*='secondary']):not([class*='cancel']):not([class*='close'])");
+      if (primaryBtn && (primaryBtn.offsetWidth > 0 || primaryBtn.offsetHeight > 0) && !primaryBtn.disabled) {
+        const pText = (primaryBtn.innerText || primaryBtn.value || "").trim().toLowerCase();
+        if (pText.includes("submit")) {
+          return { type: "submit", element: primaryBtn };
+        }
+        return { type: "continue", element: primaryBtn };
+      }
+    }
+
+    return null;
   }
 
   function findSubmitButton() {
@@ -903,24 +1182,23 @@
     field.blur();
   }
 
-  // Dynamically answer custom questions using the LLM Brain
-  async function fillQuestionsWithBrain(fields, llmResponse) {
+  // Dynamically answer custom questions using the LLM Brain with full job context & options
+  async function fillQuestionsWithBrain(fields, llmResponse, jobData) {
     const customQuestions = [];
     const fieldToQuestion = new Map();
 
     const standardKeywords = [
       "first name", "last name", "full name", "name", "email", "phone", "mobile",
-      "linkedin", "github", "portfolio", "city", "country", "university", "school",
-      "degree", "street", "address", "postcode", "zip", "postal code", "resume", "cv"
+      "linkedin", "github", "portfolio", "country", "resume", "cv"
     ];
 
     fields.forEach(field => {
       const label = getLabelText(field);
-      if (!label || label.length < 5) return;
+      if (!label || label.length < 3) return;
 
       const labelLower = label.toLowerCase();
-      const isStandard = standardKeywords.some(keyword => labelLower.includes(keyword));
-      if (isStandard) return;
+      const isStandard = standardKeywords.some(keyword => labelLower === keyword || labelLower.startsWith(keyword + " "));
+      if (isStandard && field.value) return;
 
       const hasInitialAnswer = (llmResponse.screening_answers || []).some(ans => {
         const qKeywords = ans.question.toLowerCase().split(/\s+/).filter(k => k.length > 3);
@@ -930,30 +1208,47 @@
 
       if (hasInitialAnswer) return;
 
-      if (!customQuestions.includes(label)) {
-        customQuestions.push(label);
+      let questionDesc = label;
+      if (field.tagName === "SELECT") {
+        const opts = Array.from(field.options).map(o => (o.text || "").trim()).filter(t => t && !t.toLowerCase().includes("select"));
+        if (opts.length > 0) {
+          questionDesc += ` [Choose best option from: ${opts.join(", ")}]`;
+        }
       }
-      fieldToQuestion.set(field, label);
+
+      if (!customQuestions.includes(questionDesc)) {
+        customQuestions.push(questionDesc);
+      }
+      fieldToQuestion.set(field, questionDesc);
     });
 
     if (customQuestions.length === 0) return;
 
     log(`AI Brain evaluating ${customQuestions.length} custom questions...`);
+    reportActivity("AI Brain", `Answering ${customQuestions.length} application questions...`);
+
     try {
       const data = await callBackend("/ask-brain", {
         method: "POST",
-        body: { questions: customQuestions }
+        body: {
+          questions: customQuestions,
+          job_context: jobData ? {
+            job_title: jobData.job_title,
+            company: jobData.company,
+            url: jobData.url
+          } : null
+        }
       });
       const answers = data.answers || {};
 
-      fields.forEach(field => {
+      for (const field of fields) {
         const question = fieldToQuestion.get(field);
         if (question && answers[question]) {
           const ans = answers[question];
-          log(`AI Answer: '${question.substring(0, 35)}...' -> '${ans}'`);
-          setFieldValue(field, ans);
+          log(`AI Answer: '${question.substring(0, 35)}...' -> '${ans.substring(0, 50)}'`);
+          await setFieldValue(field, ans);
         }
-      });
+      }
     } catch (err) {
       log(`Error querying AI Brain: ${err}`);
     }

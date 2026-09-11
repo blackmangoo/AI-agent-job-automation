@@ -374,12 +374,13 @@ def _log_analysis(result: dict) -> None:
         logger.info(f"Cover note: {result['cover_note'][:100]}...")
 
 
-def answer_screening_questions(questions: list, cv_text: str) -> dict:
-    """Dynamically answer a list of screening questions based on the CV.
+def answer_screening_questions(questions: list, cv_text: str, job_context: Optional[dict] = None) -> dict:
+    """Dynamically answer a list of screening questions using candidate CV and job context.
 
     Args:
-        questions: List of screening question texts.
+        questions: List of screening question strings or dictionaries.
         cv_text: Plain text content of the candidate's CV.
+        job_context: Optional dictionary with job_title, company, and description.
 
     Returns:
         Dict mapping each question string to its answered text.
@@ -393,57 +394,56 @@ def answer_screening_questions(questions: list, cv_text: str) -> dict:
 
     client = Groq(api_key=api_key)
 
-    # Compile the questions list
+    # Format questions list
     q_list = "\n".join(f"- {q}" for q in questions)
 
-    system_prompt = f"""You are an expert AI job assistant. Your task is to answer a list of screening questions honestly and accurately based on the candidate's profile and CV.
+    context_str = ""
+    if job_context:
+        context_str = f"""
+TARGET JOB DETAILS:
+- Role: {job_context.get('job_title', 'Software / AI Engineer')}
+- Company: {job_context.get('company', 'Hiring Employer')}
+- Description snippet: {job_context.get('description', '')[:1200]}
+"""
+
+    system_prompt = f"""You are Ammar Akbar's autonomous AI Job Application Agent. Your role is to think, reason, and answer any questions asked by an employer on an application form truthfully and compellingly, strictly based on Ammar's credentials.
 
 CANDIDATE PROFILE:
 {CANDIDATE.to_prompt_string()}
 
 CV TEXT:
 {cv_text}
-
-CANDIDATE FACTS & SCREENING GUIDELINES:
-- Name: Ammar Akbar
-- Degree: Bachelor of Science in Artificial Intelligence from FAST-NUCES (Expected Dec 2026)
-- Location & Commute: Lahore, Pakistan & Islamabad, Pakistan (Authorized to work in Pakistan, fully comfortable working on-site in Lahore or Islamabad, hybrid, or remote)
-- Work Authorization: Legally authorized to work in Pakistan. Does NOT require visa sponsorship.
-- Years of Experience (return JUST the integer number when asked for years or numbers):
-  * Python: 2
-  * Machine Learning / Deep Learning: 2
-  * PyTorch: 2
-  * Computer Vision (YOLO): 2
-  * NLP / RAG / LLMs: 2
-  * C++: 2
-  * FastAPI / Backend APIs: 2
-  * Flutter / Mobile: 1
-  * SQL / Databases: 2
-  * Overall relevant technical experience: 2
-- Notice Period / Availability: Immediately or 1 week
-- English Proficiency: Professional / Fluent
-- Degree Questions: Yes, has a Bachelor's degree (BS in Artificial Intelligence)
-- Shift / Schedule: Flexible, Full-time
+{context_str}
+CANDIDATE FACTS & REASONING RULES:
+1. Candidate Identity: Ammar Akbar, BS Artificial Intelligence from FAST-NUCES (Expected Dec 2026).
+2. Location: Lahore & Islamabad, Pakistan. Legally authorized to work in Pakistan. No visa sponsorship required.
+3. Experience counts (return JUST the integer when asked for years/numbers):
+   - Python: 2
+   - Machine Learning / Deep Learning: 2
+   - PyTorch: 2
+   - Computer Vision / YOLO: 2
+   - NLP / RAG / LLMs: 2
+   - C++: 2
+   - FastAPI / Backend: 2
+   - Flutter / Mobile: 1
+   - SQL: 2
+4. Company-specific & behavioral questions (e.g. 'Why this company?', 'Describe a technical challenge', 'Relevant project'):
+   - Think strategically about the employer's domain.
+   - Write a concise, professional 2-3 sentence answer directly referencing Ammar's real projects:
+     * OmniDrive AI (YOLO11-Large on 26,820 images, 99.1% top-1 accuracy, 110ms CPU latency via FastAPI, Kalman filter sensor fusion).
+     * Serene (GPT-Neo-125M LoRA fine-tuning, DistilRoBERTa emotion detection, FAISS retrieval, Supabase memory).
+     * DocuMind (Document-grounded RAG chatbot with MiniLM embeddings, FAISS top-k retrieval, LangChain).
+     * DevelopersHub Intern (Delivered 5 AI systems in 6 weeks, Luxe Estate XGBoost on 1M+ rows).
+5. Multiple Choice / Dropdown options: Select the single most accurate option provided.
+6. Yes/No questions: Return exactly "Yes" or "No".
+7. Notice period: "Immediately" or "1 week".
+8. Salary expectations: Provide a reasonable figure (e.g. "100000" or "120000" PKR) or "Negotiable".
 
 OUTPUT FORMAT (STRICT JSON):
-Respond with a JSON object mapping each question EXACTLY to its answer.
-Example format:
-{{
-  "How many years of Python experience do you have?": "2",
-  "Are you legally authorized to work in Pakistan?": "Yes",
-  "Will you require visa sponsorship?": "No",
-  "What is your highest level of education completed?": "Bachelor's Degree"
-}}
-
-Rules:
-- Keep answers precise, concise, and professional.
-- For yes/no questions, reply with EXACTLY "Yes" or "No".
-- For experience questions asking for years, reply with ONLY the number (e.g. "2") so it works in both number inputs and text fields.
-- For city/location, answer "Lahore" or "Islamabad" depending on context.
-- Output ONLY valid JSON. No markdown fences, no explanations.
+Respond with a JSON object mapping each question EXACTLY to its answer string.
 """
 
-    user_prompt = f"Answer these specific screening questions:\n{q_list}"
+    user_prompt = f"Answer these application questions for {job_context.get('company', 'this employer') if job_context else 'the employer'}:\n{q_list}"
 
     response = _call_groq(client, system_prompt, user_prompt)
     

@@ -154,12 +154,14 @@ class APIRequestHandler(http.server.BaseHTTPRequestHandler):
 
         elif self.path == "/ask-brain":
             try:
-                # Expecting format: { "questions": [...] }
+                # Expecting format: { "questions": [...], "job_context": { ... } }
                 questions = data.get("questions", [])
-                logger.info(f"Asking brain to answer {len(questions)} screening questions dynamically...")
-                
-                answers = answer_screening_questions(questions, cv_text)
-                
+                job_context = data.get("job_context", None)
+                company = job_context.get("company", "Employer") if job_context else "Employer"
+                logger.info(f"AI Brain reasoning over {len(questions)} application questions for {company}...")
+
+                answers = answer_screening_questions(questions, cv_text, job_context=job_context)
+
                 self._set_headers(200)
                 self.wfile.write(json.dumps({"answers": answers}).encode("utf-8"))
             except Exception as e:
