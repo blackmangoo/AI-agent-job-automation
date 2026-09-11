@@ -59,10 +59,24 @@ async function callBackend(endpoint, options = {}) {
 
 function isIndeedApplyPage() {
   const url = window.location.href;
-  if (url.includes("/ia/") || url.includes("apply.indeed.com") || url.includes("smartapply.indeed.com") || url.includes("/applystart")) {
+  // Explicit apply URLs
+  if (url.includes("/ia/") || url.includes("apply.indeed.com") || url.includes("smartapply.indeed.com") || url.includes("/applystart") || url.includes("indeedapply=1")) {
     return true;
   }
-  return !!document.querySelector("div[class*='ia-'], div[data-testid='apply-form'], form[action*='apply'], #indeedapply-modal, div.ia-BasePage, div[role='dialog']");
+
+  // Active modal/overlay check
+  const activeModal = document.querySelector("#indeedapply-modal, div.ia-BasePage, iframe[src*='apply'], div[data-testid='apply-form']");
+  if (activeModal && (activeModal.offsetWidth > 0 || activeModal.offsetHeight > 0)) {
+    return true;
+  }
+
+  // On search/feed pages (/jobs?, /m/jobs, etc.), we are NOT on an apply page unless a modal is open above
+  if (url.includes("/jobs?") || url.includes("/jobs/") || url.includes("/m/jobs") || url.endsWith("indeed.com/") || url.includes("pk.indeed.com/?")) {
+    return false;
+  }
+
+  const applyContainer = document.querySelector("form[action*='apply'], div[data-testid='apply-form'], div.ia-BasePage");
+  return !!(applyContainer && applyContainer.offsetWidth > 0);
 }
 
 // Log a message to the extension popup and save it to storage
@@ -403,7 +417,26 @@ async function autoFillJobApplication() {
     let formFields = [];
     log("Waiting for form fields to render on page...");
     for (let i = 0; i < 10; i++) {
-      formFields = Array.from(document.querySelectorAll("input:not([type='hidden']), select, textarea"));
+      const container = document.querySelector("#indeedapply-modal, div.ia-BasePage, div[data-testid='apply-form'], form[action*='apply'], main, .ia-Container") || document.body;
+
+      formFields = Array.from(container.querySelectorAll("input:not([type='hidden']), select, textarea"))
+        .filter(el => {
+          // Strictly reject any search box, navbar, or header inputs
+          if (el.closest("form[role='search'], form#jobsearch, #searchform, .jobsearch-SearchBox, header, nav, #header-search-form")) {
+            return false;
+          }
+          const id = (el.id || "").toLowerCase();
+          const name = (el.name || "").toLowerCase();
+          const placeholder = (el.placeholder || "").toLowerCase();
+          if (id === "text-input-what" || id === "text-input-where" || name === "q" || name === "l") {
+            return false;
+          }
+          if (placeholder.includes("job title, keywords") || placeholder.includes("city, state") || placeholder.includes("postcode")) {
+            return false;
+          }
+          return (el.offsetWidth > 0 || el.offsetHeight > 0);
+        });
+
       if (formFields.length > 0) break;
       await sleep(500);
     }
@@ -684,49 +717,42 @@ async function setFieldValue(field, value) {
   }
 }
 
-// Simulate realistic keypress-by-keypress typing and autocomplete selection
+// Clean and robust field typing for React and standard inputs
 async function simulateTyping(field, value) {
   if (!field || value === undefined || value === null) return;
-  const strValue = String(value);
+  const strValue = String(value).trim();
+  if (!strValue) return;
+
   field.focus();
-  field.value = "";
 
-  // Type character by character
-  for (let i = 0; i < strValue.length; i++) {
-    const char = strValue[i];
-    const keydownEvent = new KeyboardEvent('keydown', { key: char, bubbles: true });
-    const keypressEvent = new KeyboardEvent('keypress', { key: char, bubbles: true });
+  // Use native prototype property setter so React synthetic events do not duplicate/interleave characters
+  const proto = field.tagName === 'TEXTAREA'
+    ? window.HTMLTextAreaElement.prototype
+    : window.HTMLInputElement.prototype;
+  const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
 
-    field.dispatchEvent(keydownEvent);
-    field.dispatchEvent(keypressEvent);
-
-    field.value += char;
-
-    const inputEvent = new Event('input', { bubbles: true });
-    field.dispatchEvent(inputEvent);
-
-    const keyupEvent = new KeyboardEvent('keyup', { key: char, bubbles: true });
-    field.dispatchEvent(keyupEvent);
-
-    await sleep(40); // 40ms typing delay per character
+  if (nativeSetter) {
+    nativeSetter.call(field, strValue);
+  } else {
+    field.value = strValue;
   }
-  
+
+  field.dispatchEvent(new Event('input', { bubbles: true }));
   field.dispatchEvent(new Event('change', { bubbles: true }));
-  
-  // Wait for autocomplete lists to appear (specifically for City fields)
-  await sleep(600);
-  
-  // Click first suggestion if autocomplete opens and is visible
+
+  // Wait for autocomplete suggestions to appear (specifically for City or Education fields)
+  await sleep(400);
+
   const suggestions = Array.from(document.querySelectorAll('ul[role="listbox"] li, li[role="option"], [id*="suggestion"], .autocomplete-suggestion'))
     .filter(el => el.offsetWidth > 0 && el.offsetHeight > 0);
-  
+
   if (suggestions.length > 0) {
     const firstOption = suggestions[0];
-    log(`Autocomplete click: "${firstOption.innerText.trim()}"`);
+    log("Autocomplete click: " + firstOption.innerText.trim());
     firstOption.click();
     await sleep(200);
   }
-  
+
   field.blur();
 }
 
