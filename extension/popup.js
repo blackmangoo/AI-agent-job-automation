@@ -158,38 +158,44 @@ function toggleBotUI(running) {
 // Start Bot
 btnStart.addEventListener("click", () => {
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    if (tabs[0] && tabs[0].url && tabs[0].url.includes("indeed.com")) {
+    const currentTab = tabs[0];
+    if (currentTab && currentTab.url && (currentTab.url.includes("indeed.com") || currentTab.url.includes("smartapply"))) {
       const config = {
         dryRun: settingDryRun.checked,
         skipIneligible: settingSkipIneligible.checked,
         backendUrl: activeBackendUrl
       };
 
-      chrome.storage.local.set({ botRunning: true });
+      // Set storage state - triggers content scripts immediately via storage.onChanged
+      chrome.storage.local.set({
+        botRunning: true,
+        dryRun: config.dryRun,
+        skipIneligible: config.skipIneligible,
+        activeBackendUrl: activeBackendUrl,
+        triggerTime: Date.now()
+      });
       toggleBotUI(true);
+      logToTerminal("Starting bot...");
 
-      const tabId = tabs[0].id;
+      const tabId = currentTab.id;
 
-      // Try sending message directly
+      // Also deliver message directly
       chrome.tabs.sendMessage(tabId, { action: "start", config: config }, (response) => {
         if (chrome.runtime.lastError) {
-          // Content script is not injected in the tab yet (e.g. extension was just reloaded). Auto-inject it now!
+          // Content script not loaded yet (e.g. extension reloaded). Inject into top frame!
           chrome.scripting.executeScript({
-            target: { tabId: tabId, allFrames: true },
+            target: { tabId: tabId },
             files: ["content.js"]
           }, () => {
             if (chrome.runtime.lastError) {
-              logToTerminal("Notice: Please refresh the Indeed tab once and click Start.");
+              logToTerminal("Notice: Tab connection issue (" + chrome.runtime.lastError.message + "). Refresh the Indeed tab once.");
               chrome.storage.local.set({ botRunning: false });
               toggleBotUI(false);
             } else {
-              // Retry sending start message after injection
               setTimeout(() => {
-                chrome.tabs.sendMessage(tabId, { action: "start", config: config }, (retryResp) => {
+                chrome.tabs.sendMessage(tabId, { action: "start", config: config }, () => {
                   if (chrome.runtime.lastError) {
-                    logToTerminal("Notice: Please refresh the Indeed tab once and click Start.");
-                    chrome.storage.local.set({ botRunning: false });
-                    toggleBotUI(false);
+                    // Handled automatically by storage.onChanged
                   }
                 });
               }, 150);
@@ -198,7 +204,7 @@ btnStart.addEventListener("click", () => {
         }
       });
     } else {
-      logToTerminal("Error: Please open an Indeed.com job page first.");
+      logToTerminal("Error: Please open an Indeed.com page first.");
     }
   });
 });

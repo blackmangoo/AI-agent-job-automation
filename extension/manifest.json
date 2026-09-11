@@ -15,7 +15,8 @@
     "storage"
   ],
   "host_permissions": [
-    "https://*.indeed.com/*",
+    "*://*.indeed.com/*",
+    "*://indeed.com/*",
     "http://localhost:*/*",
     "http://127.0.0.1:*/*"
   ],
@@ -33,7 +34,10 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://*.indeed.com/*"],
+      "matches": [
+        "*://*.indeed.com/*",
+        "*://indeed.com/*"
+      ],
       "js": ["content.js"],
       "all_frames": true,
       "run_at": "document_end"

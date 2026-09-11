@@ -123,6 +123,40 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 });
 
+// Storage trigger listener: provides zero-failure activation across all tabs & frames
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && changes.botRunning) {
+    if (changes.botRunning.newValue === true) {
+      if (!isRunning) {
+        chrome.storage.local.get(["dryRun", "skipIneligible", "activeBackendUrl"], (res) => {
+          isRunning = true;
+          config = {
+            dryRun: res.dryRun !== false,
+            skipIneligible: res.skipIneligible !== false,
+            backendUrl: res.activeBackendUrl || backendUrl
+          };
+          if (res.activeBackendUrl) backendUrl = res.activeBackendUrl;
+          log("Bot started successfully. Scanning page...");
+          stats = { scanned: 0, applied: 0 };
+          updateStats();
+
+          if (isIndeedApplyPage()) {
+            log("Detected Indeed Apply page. Starting auto-filler...");
+            autoFillJobApplication();
+          } else {
+            startJobCrawl();
+          }
+        });
+      }
+    } else if (changes.botRunning.newValue === false) {
+      if (isRunning) {
+        isRunning = false;
+        log("Bot stopped.");
+      }
+    }
+  }
+});
+
 // Check if bot was running in background (for page reloads during application)
 chrome.storage.local.get(["botRunning", "dryRun", "skipIneligible", "stats"], (res) => {
   if (res.botRunning) {
