@@ -70,15 +70,22 @@ class APIRequestHandler(http.server.BaseHTTPRequestHandler):
     def _set_headers(self, status_code=200):
         self.send_response(status_code)
         self.send_header("Content-Type", "application/json")
-        # CORS Headers to allow requests from any Chrome extension
+        # CORS Headers to allow requests from Chrome extension and web pages
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
+        self.send_header("Access-Control-Allow-Private-Network", "true")
         self.end_headers()
 
     def do_OPTIONS(self):
         # Handle CORS preflight request
-        self._set_headers(200)
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
+        self.send_header("Access-Control-Allow-Private-Network", "true")
+        self.send_header("Access-Control-Max-Age", "86400")
+        self.end_headers()
 
     def do_GET(self):
         if self.path == "/status":
@@ -189,11 +196,23 @@ class APIRequestHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(json.dumps({"error": "Not Found"}).encode("utf-8"))
 
 
-def run_server(port=8000):
-    server_address = ("", port)
-    http.server.ThreadingHTTPServer.allow_reuse_address = True
-    httpd = http.server.ThreadingHTTPServer(server_address, APIRequestHandler)
-    logger.info(f"Starting Multi-Threaded Local API Server on http://localhost:{port}...")
+def run_server(port=8005):
+    # Try preferred port; if occupied, fallback to alternative port
+    server_address = ("0.0.0.0", port)
+    httpd = None
+    actual_port = port
+
+    try:
+        http.server.ThreadingHTTPServer.allow_reuse_address = True
+        httpd = http.server.ThreadingHTTPServer(server_address, APIRequestHandler)
+    except OSError as e:
+        alt_port = 8006 if port == 8005 else 8005
+        logger.warning(f"Port {port} not available ({e}). Falling back to port {alt_port}...")
+        server_address = ("0.0.0.0", alt_port)
+        httpd = http.server.ThreadingHTTPServer(server_address, APIRequestHandler)
+        actual_port = alt_port
+
+    logger.info(f"Starting Multi-Threaded Local API Server on http://localhost:{actual_port} (and http://127.0.0.1:{actual_port})...")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
@@ -202,5 +221,5 @@ def run_server(port=8000):
 
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 8000))
+    port = int(os.getenv("PORT", 8005))
     run_server(port)

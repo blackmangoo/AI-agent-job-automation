@@ -5,7 +5,57 @@ let stats = { scanned: 0, applied: 0 };
 let currentJobIndex = 0;
 let jobCards = [];
 
-const BACKEND_URL = "http://127.0.0.1:8000";
+let backendUrl = "http://127.0.0.1:8005";
+
+// Load active backend URL from storage
+chrome.storage.local.get("activeBackendUrl", (res) => {
+  if (res.activeBackendUrl) backendUrl = res.activeBackendUrl;
+});
+
+// Robust backend caller: tries background worker first (no mixed-content/CORS limits) with direct fetch fallback
+async function callBackend(endpoint, options = {}) {
+  // 1. Try background worker proxy (immune to HTTPS/HTTP mixed content and page CSP)
+  try {
+    const bgResponse = await new Promise((resolve) => {
+      chrome.runtime.sendMessage({
+        action: "backendFetch",
+        backendUrl: backendUrl,
+        endpoint: endpoint,
+        options: options
+      }, (resp) => {
+        if (chrome.runtime.lastError || !resp) {
+          resolve(null);
+        } else {
+          resolve(resp);
+        }
+      });
+    });
+
+    if (bgResponse && bgResponse.success) {
+      return bgResponse.data;
+    }
+  } catch (e) {
+    // Fallback to direct fetch below
+  }
+
+  // 2. Direct fetch fallback
+  const fetchOpts = {
+    method: options.method || "GET",
+    headers: {
+      "Content-Type": "application/json",
+      ...(options.headers || {})
+    },
+    signal: AbortSignal.timeout(60000)
+  };
+
+  if (options.body) {
+    fetchOpts.body = typeof options.body === "string" ? options.body : JSON.stringify(options.body);
+  }
+
+  const res = await fetch(`${backendUrl}${endpoint}`, fetchOpts);
+  if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+  return await res.json();
+}
 
 function isIndeedApplyPage() {
   const url = window.location.href;
@@ -186,18 +236,16 @@ async function processNextJob() {
     updateStats();
 
     const jobUrl = `https://pk.indeed.com/viewjob?jk=${jobKey}`;
-    const response = await fetch(`${BACKEND_URL}/analyze`, {
+    const llmResponse = await callBackend("/analyze", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+      body: {
         job_title: jobTitle,
         company: company,
         description: description,
         url: jobUrl
-      })
+      }
     });
 
-    const llmResponse = await response.json();
     log(`Eligibility Result: ${llmResponse.eligible ? "YES" : "NO"} (${Math.round(llmResponse.confidence_score * 100)}% confidence)`);
     log(`Reason: ${llmResponse.eligibility_reason}`);
 
@@ -259,8 +307,7 @@ async function autoFillJobApplication() {
   
   // Fetch candidate profile and current analysis
   try {
-    const candidateResponse = await fetch(`${BACKEND_URL}/candidate`);
-    const candidate = await candidateResponse.json();
+    const candidate = await callBackend("/candidate");
 
     const stored = await chrome.storage.local.get(["currentLlmResponse", "currentJobData"]);
     const llmResponse = stored.currentLlmResponse;
@@ -308,14 +355,13 @@ async function autoFillJobApplication() {
       log("🎉 REVIEW REQUIRED: Submit button detected. Please review the page and click Submit manually.");
       
       // Log success to local backend
-      await fetch(`${BACKEND_URL}/log`, {
+      await callBackend("/log", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+        body: {
           job_data: jobData,
           llm_response: llmResponse,
           status: "applied"
-        })
+        }
       });
       
       stats.applied++;
@@ -648,13 +694,10 @@ async function fillQuestionsWithBrain(fields, llmResponse) {
 
   log(`Asking AI Brain to answer ${customQuestions.length} custom questions...`);
   try {
-    const response = await fetch(`${BACKEND_URL}/ask-brain`, {
+    const data = await callBackend("/ask-brain", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ questions: customQuestions })
+      body: { questions: customQuestions }
     });
-    
-    const data = await response.json();
     const answers = data.answers || {};
 
     // Fill the fields with the returned answers
