@@ -168,12 +168,33 @@ btnStart.addEventListener("click", () => {
       chrome.storage.local.set({ botRunning: true });
       toggleBotUI(true);
 
-      // Send start message to content script
-      chrome.tabs.sendMessage(tabs[0].id, { action: "start", config: config }, (response) => {
+      const tabId = tabs[0].id;
+
+      // Try sending message directly
+      chrome.tabs.sendMessage(tabId, { action: "start", config: config }, (response) => {
         if (chrome.runtime.lastError) {
-          logToTerminal("Notice: Tab connection error. Reload the Indeed tab and click Start.");
-          chrome.storage.local.set({ botRunning: false });
-          toggleBotUI(false);
+          // Content script is not injected in the tab yet (e.g. extension was just reloaded). Auto-inject it now!
+          chrome.scripting.executeScript({
+            target: { tabId: tabId, allFrames: true },
+            files: ["content.js"]
+          }, () => {
+            if (chrome.runtime.lastError) {
+              logToTerminal("Notice: Please refresh the Indeed tab once and click Start.");
+              chrome.storage.local.set({ botRunning: false });
+              toggleBotUI(false);
+            } else {
+              // Retry sending start message after injection
+              setTimeout(() => {
+                chrome.tabs.sendMessage(tabId, { action: "start", config: config }, (retryResp) => {
+                  if (chrome.runtime.lastError) {
+                    logToTerminal("Notice: Please refresh the Indeed tab once and click Start.");
+                    chrome.storage.local.set({ botRunning: false });
+                    toggleBotUI(false);
+                  }
+                });
+              }, 150);
+            }
+          });
         }
       });
     } else {
